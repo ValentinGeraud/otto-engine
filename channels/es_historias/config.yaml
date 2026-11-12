@@ -1,0 +1,54 @@
+# ===== Chaîne test ES : faits divers, histoires vraies incroyables =====
+# Seules les clés différentes de ../../config.yaml sont ici (le reste est hérité).
+# Lancer :  python agent.py --channel es_historias
+
+watch:
+  # Vérifiées le 10/11/2026 (abonnés / vues des dernières vidéos) :
+  youtube:
+    - "@TheWildProject"      # 7,4 M : invités qui racontent des vies hors norme (100-240k vues)
+    - "@DrossRotzank"        # 24 M : récits de mystères et faits divers (0,8-1,2 M vues)
+    - "@ElRincondeGiorgio"   # 12 M : histoires vraies, crimes, phénomènes (1,7-2,9 M vues)
+    - "@relatosdelanoche"    # 2,4 M : récits vécus envoyés par les abonnés (50-510k vues)
+    - "@MundoDesconocido"    # 2,8 M : faits étranges et inexpliqués (50-320k vues)
+    - "@CuriosidadesConMike" # 7,8 M : faits surprenants (120-230k vues)
+  twitch: []                 # n'hérite pas des streamers FR
+  max_age_days: 14           # les histoires ne vieillissent pas comme l'actu
+  min_views: 50000
+  videos_per_run: 3
+  max_source_minutes: 150
+
+sources: []
+
+language: es
+niche: "historias reales (public hispanophone) : faits divers, témoignages incroyables, histoires vécues surprenantes, mystères et affaires réelles"
+focus: >
+  Histoires vraies racontées à la première personne, retournements de situation, révélations
+  qui glacent le sang, survivants, coïncidences impossibles, affaires criminelles réelles,
+  phénomènes inexpliqués, rencontres hors du commun. Le clip doit poser l'histoire très vite
+  (« A los 17 años me secuestraron… ») et finir sur la chute ou un cliffhanger.
+  Évite les descriptions de violence trop crues (démonétisation) et les sponsors.
+
+clips_per_video: 3
+min_seconds: 30            # une histoire a besoin d'un peu plus de place qu'un fou rire
+
+hook_style: ""             # garde un hook classique (le ton « fou » est propre à Clip by Cut)
+
+style:
+  hook_seconds: 3.0
+  end_card_label: "EL VEREDICTO"
+
+publish:
+  # Nom EXACT de la chaîne YouTube à créer. Tant que c'est REMPLACE_MOI, l'agent monte
+  # les clips mais ne publie rien.
+  youtube_channel: "Historia Incredible"
+  # Projet Google Cloud DÉDIÉ à cette chaîne (quota de 6 envois/jour non partagé) :
+  # crée-le, télécharge son identifiant OAuth et enregistre-le sous ce nom dans secrets/.
+  client_secret: client_secret_es.json
+  hashtags: ["historiasreales", "historias", "misterio", "relatos"]
+  category_id: 24            # 24 = Entertainment
+  timezone: America/Mexico_City  # le Mexique est le plus gros public hispanophone
+  window: ["10:00", "22:30"]
+  ramp:
+    start: 2026-11-10
+    per_day_by_week: [2, 3, 4, 6, 8]   # plafond 8/jour : au-delà, les vues par Short baissent
+  max_backlog: 20

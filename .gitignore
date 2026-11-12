@@ -1,0 +1,14 @@
+secrets/
+work/
+output/
+a_poster/
+state.json
+quota.json
+channels/*/state.json
+channels/*/output/
+channels/*/a_poster/
+channels/*/analytics.json
+channels/*/run.log
+channels/saas_*/
+__pycache__/
+branding/music/

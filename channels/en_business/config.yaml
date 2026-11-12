@@ -1,0 +1,56 @@
+# ===== Chaîne test EN : business, entrepreneurs, actu finance =====
+# Seules les clés différentes de ../../config.yaml sont ici (le reste est hérité).
+# Lancer :  python agent.py --channel en_business
+
+watch:
+  # Vérifiées le 10/11/2026 (abonnés / vues des dernières vidéos) :
+  youtube:
+    - "@TheDiaryOfACEO"      # 21,9 M : interviews longues, confessions, histoires de fondateurs
+    - "@PBDPodcast"          # 3 M : débats business/politique, déclarations choc (200-600k vues)
+    - "@AlexHormozi"         # 4,6 M : conseils business tranchés (680-840k vues)
+    - "@StarterStory"        # 0,9 M : « comment j'ai fait 1 M$ avec… » (50-165k vues)
+    - "@MyFirstMillionPod"   # 1 M : idées de business, histoires de fondateurs
+    - "@GrahamStephan"       # 5,2 M : argent, immobilier, actu marchés
+    - "@meetkevin"           # 2 M : actu bourse / Fed / déclarations du jour
+    - "@CNBC"                # 4,2 M : reportages et interviews de CEO (⚠ Content ID actif)
+  twitch: []                 # n'hérite pas des streamers FR
+  max_age_days: 7            # l'actu finance vieillit vite
+  min_views: 30000
+  videos_per_run: 3
+  max_source_minutes: 180    # les podcasts business durent souvent 2 à 3 h
+
+sources: []
+
+language: en
+niche: "business & finance (public anglophone) : interviews d'entrepreneurs, histoires de fondateurs, actu des marchés et déclarations de CEO/milliardaires"
+focus: >
+  Chiffres choc (« I lost $2M in 6 months »), parcours de fondateurs (de fauché à millionnaire),
+  conseils business à contre-courant, déclarations fortes de CEO, investisseurs ou politiques
+  sur l'économie, prédictions sur les marchés, débats tendus, confessions et échecs.
+  Chaque clip doit se comprendre sans contexte et accrocher dès la première seconde.
+  Évite le jargon trop technique et les passages publicitaires (sponsors).
+
+clips_per_video: 3
+
+hook_style: ""             # garde un hook classique (le ton « fou » est propre à Clip by Cut)
+
+style:
+  hook_seconds: 3.0
+  end_card_label: "THE VERDICT"
+
+publish:
+  # Nom EXACT de la chaîne YouTube à créer. Tant que c'est REMPLACE_MOI, l'agent monte
+  # les clips mais ne publie rien.
+  youtube_channel: "Side Hustle"
+  youtube_channel_id: "UCR5mqG0orqgfqy9rNPhjo1Q"   # @Side_Hustle_business : c'est CET identifiant qui est vérifié avant chaque envoi
+  # Projet Google Cloud DÉDIÉ à cette chaîne (quota de 6 envois/jour non partagé) :
+  # crée-le, télécharge son identifiant OAuth et enregistre-le sous ce nom dans secrets/.
+  client_secret: client_secret_en.json
+  hashtags: ["business", "entrepreneur", "money", "motivation"]
+  category_id: 25            # 25 = News & Politics (27 = Education, 22 = People & Blogs)
+  timezone: America/New_York # créneaux calés sur le public US
+  window: ["08:00", "21:00"]
+  ramp:
+    start: 2026-11-10
+    per_day_by_week: [2, 3, 4, 6, 8]   # plafond 8/jour : au-delà, les vues par Short baissent
+  max_backlog: 20

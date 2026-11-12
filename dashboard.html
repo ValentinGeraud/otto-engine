@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip by Cut – Tableau de bord</title>
+<style>
+  :root {
+    --bg: #0b0b0c; --panel: #151517; --panel2: #1c1c1f; --line: #2a2a2e;
+    --text: #f2f2f2; --muted: #9a9aa2; --yellow: #ffe500; --green: #39d98a;
+    --blue: #4da3ff; --orange: #ff9f43; --red: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 16px 24px;
+           border-bottom: 1px solid var(--line); position: sticky; top: 0;
+           background: rgba(11,11,12,.92); backdrop-filter: blur(8px); z-index: 5; }
+  header img { width: 44px; height: 44px; border-radius: 50%; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .live { margin-left: auto; display: flex; align-items: center; gap: 8px;
+          font-size: 13px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #555; }
+  .dot.on { background: var(--green); box-shadow: 0 0 0 0 rgba(57,217,138,.7);
+            animation: pulse 1.6s infinite; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 10px rgba(57,217,138,0); } 100% { box-shadow: 0 0 0 0 rgba(57,217,138,0); } }
+  main { padding: 20px 24px 40px; max-width: 1400px; margin: 0 auto; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .stat .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .stat .v { font-size: 26px; font-weight: 800; margin-top: 4px; }
+  .stat .v small { font-size: 14px; color: var(--muted); font-weight: 600; }
+  .bar { height: 6px; background: var(--panel2); border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--yellow); }
+  h2 { font-size: 15px; margin: 28px 0 12px; display: flex; align-items: center; gap: 8px; }
+  h2 .count { color: var(--muted); font-weight: 500; }
+  .grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .src { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .src:last-child { border-bottom: 0; }
+  .src .t { font-weight: 700; margin-bottom: 10px; }
+  .pipe { display: flex; gap: 6px; flex-wrap: wrap; }
+  .step { flex: 1; min-width: 110px; padding: 8px 10px; border-radius: 8px; background: var(--panel2);
+          color: var(--muted); font-size: 12px; font-weight: 600; border: 1px solid transparent; }
+  .step.done { color: var(--green); }
+  .step.done::before { content: "✓ "; }
+  .step.active { color: var(--bg); background: var(--yellow); }
+  .step.active::before { content: "● "; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .step.err { background: rgba(255,92,92,.15); color: var(--red); }
+  .minis { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .mini { font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--panel2); }
+  .disc li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0;
+             border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .disc ul { list-style: none; margin: 0; padding: 0; }
+  .disc .vph { color: var(--yellow); font-weight: 700; white-space: nowrap; }
+  .tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--panel2); color: var(--muted); }
+  .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
+  .clip { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+          display: flex; flex-direction: column; }
+  .clip .th { aspect-ratio: 9/16; background: #000 center/cover no-repeat; position: relative; cursor: pointer; }
+  .clip .th .play { position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px;
+                    opacity: 0; transition: .15s; background: rgba(0,0,0,.35); }
+  .clip .th:hover .play { opacity: 1; }
+  .clip .badge { position: absolute; top: 8px; left: 8px; }
+  .clip .score { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.75);
+                 padding: 2px 7px; border-radius: 6px; font-weight: 800; font-size: 12px; }
+  .clip .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .clip .hook { font-weight: 800; }
+  .clip .verdict { color: var(--muted); font-size: 12px; }
+  .clip .meta { font-size: 12px; color: var(--muted); }
+  .clip a { color: var(--blue); text-decoration: none; font-weight: 600; font-size: 13px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 20px;
+          text-transform: uppercase; letter-spacing: .4px; }
+  .s-programmé { background: rgba(57,217,138,.15); color: var(--green); }
+  .s-en.file, .s-en-file { background: rgba(255,159,67,.15); color: var(--orange); }
+  .s-monté { background: rgba(77,163,255,.15); color: var(--blue); }
+  .s-montage { background: rgba(255,229,0,.15); color: var(--yellow); }
+  .s-erreur { background: rgba(255,92,92,.15); color: var(--red); }
+  pre.log { margin: 0; white-space: pre-wrap; font: 12px/1.5 ui-monospace, Consolas, monospace;
+            color: #c8c8ce; max-height: 260px; overflow: auto; }
+  .empty { color: var(--muted); padding: 10px 0; }
+  dialog { border: 0; padding: 0; background: transparent; }
+  dialog::backdrop { background: rgba(0,0,0,.8); }
+  dialog video { max-height: 88vh; border-radius: 12px; display: block; }
+  .tabs { display: flex; gap: 6px; padding: 10px 24px; border-bottom: 1px solid var(--line);
+          overflow-x: auto; position: sticky; top: 77px; background: rgba(11,11,12,.92); z-index: 4; }
+  .tab { padding: 7px 14px; border-radius: 20px; background: var(--panel); border: 1px solid var(--line);
+         color: var(--muted); font-weight: 700; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .tab.on { background: var(--yellow); color: #000; border-color: var(--yellow); }
+  .tab .run { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+              margin-left: 6px; vertical-align: middle; animation: blink 1s infinite; }
+  .chcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .chcard { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+            cursor: pointer; transition: border-color .15s; }
+  .chcard:hover { border-color: var(--yellow); }
+  .chcard .n { font-weight: 800; font-size: 16px; }
+  .chcard .niche { color: var(--muted); font-size: 12px; margin: 4px 0 12px; }
+  .chcard .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .chcard .row b { display: block; font-size: 20px; }
+  .chcard .row span { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+  .chcard .nxt { margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .warn { color: var(--orange); font-size: 12px; margin-top: 8px; }
+  .up li { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center;
+           padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .up ul { list-style: none; margin: 0; padding: 0; }
+  .up .w { color: var(--yellow); font-weight: 700; }
+  .up .c { color: var(--muted); font-size: 12px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <img src="/logo" alt="">
+  <div>
+    <h1>Clip by Cut</h1>
+    <div class="sub" id="chan">YouTube Shorts automatiques</div>
+  </div>
+  <div class="live"><span class="dot" id="dot"></span><span id="livetxt">…</span></div>
+</header>
+<nav class="tabs" id="tabs"></nav>
+
+<main id="ov">
+  <h2>🌍 Toutes les chaînes</h2>
+  <div class="stats" id="ovstats"></div>
+  <h2>📈 Vues cumulées de toutes les chaînes</h2>
+  <div class="panel"><svg id="ovchart" viewBox="0 0 600 160" style="width:100%;height:160px"></svg></div>
+  <h2>📺 Chaînes</h2>
+  <div class="chcards" id="chcards"></div>
+  <h2>🗓️ Ce qui va sortir <span class="count">(toutes chaînes)</span></h2>
+  <div class="panel up" id="ovup"></div>
+</main>
+
+<main id="det" class="hidden">
+  <div class="stats" id="stats"></div>
+
+  <h2>🗓️ Ce qui va sortir</h2>
+  <div class="panel up" id="up"></div>
+
+  <h2>📈 Vues YouTube <span class="count" id="anupd"></span></h2>
+  <div class="grid2">
+    <div class="panel"><svg id="chart" viewBox="0 0 600 160" style="width:100%;height:160px"></svg></div>
+    <div class="stats" id="anstats" style="grid-template-columns:1fr 1fr"></div>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <h2>⚙️ Passage en cours</h2>
+      <div class="panel" id="sources"><div class="empty">En attente…</div></div>
+    </div>
+    <div>
+      <h2>🔥 Vidéos du moment repérées</h2>
+      <div class="panel disc" id="disc"><div class="empty">—</div></div>
+    </div>
+  </div>
+
+  <h2>🎬 Clips <span class="count" id="ccount"></span></h2>
+  <div class="clips" id="clips"></div>
+
+  <h2>🧾 Journal</h2>
+  <div class="panel"><pre class="log" id="log"></pre></div>
+</main>
+
+<dialog id="dlg"><video id="vid" controls autoplay playsinline></video></dialog>
+
+<script>
+const STEP_LABELS = {download: "Téléchargement", transcribe: "Transcription",
+                     select: "Sélection IA", render: "Montage", publish: "Publication"};
+const ORDER = ["download", "transcribe", "select", "render", "publish"];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const pill = s => `<span class="pill s-${String(s).replace(' ', '-')}">${esc(s)}</span>`;
+
+function stat(k, v, extra = "") { return `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${extra}</div>`; }
+
+function renderStats(s) {
+  const pct = s.quota_max ? Math.min(100, s.quota_used / s.quota_max * 100) : 0;
+  $("stats").innerHTML =
+    stat("Clips créés", s.made) +
+    stat("Programmés", s.scheduled) +
+    stat("En file d'attente", s.pending) +
+    stat("Posts aujourd'hui", `${s.quota_used}<small> / ${s.quota_max}</small>`,
+         `<div class="bar"><i style="width:${pct}%"></i></div>`) +
+    stat("Palier anti-spam", `${s.ramp_today}<small> /jour</small>`) +
+    stat("Prochain créneau", `<span style="font-size:18px">${esc(s.next_slot || "—")}</span>`);
+  $("chan").textContent = `Chaîne YouTube : ${s.channel || "?"}`;
+}
+
+function renderAnalytics(a) {
+  if (!a) return;
+  $("anupd").textContent = a.updated ? `(maj ${a.updated.replace("T", " ")})` : "(pas encore de données)";
+  const fmt = n => (n || 0).toLocaleString("fr-FR");
+  $("anstats").innerHTML = stat("Vues totales", fmt(a.total_views)) + stat("Vues 24 h", "+" + fmt(a.views_24h)) +
+    stat("Likes", fmt(a.total_likes)) + stat("Commentaires", fmt(a.total_comments));
+  drawChart($("chart"), a.daily || []);
+}
+
+const fmtN = n => (n || 0).toLocaleString("fr-FR");
+function drawChart(svg, d) {
+  const fmt = fmtN;
+  if (d.length < 2) { svg.innerHTML = `<text x="300" y="85" fill="#9a9aa2" text-anchor="middle" font-size="14">La courbe apparaîtra après 2 jours de données</text>`; return; }
+  const max = Math.max(...d.map(x => x.views), 1), W = 600, H = 140;
+  const pts = d.map((x, i) => [i / (d.length - 1) * (W - 20) + 10, H - x.views / max * (H - 20) + 5]);
+  svg.innerHTML = `<polyline fill="none" stroke="#ffe500" stroke-width="3" stroke-linejoin="round" points="${pts.map(p => p.join(",")).join(" ")}"/>` +
+    pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="3.5" fill="#ffe500"><title>${d[i].day} : ${fmt(d[i].views)} vues</title></circle>`).join("") +
+    `<text x="10" y="158" fill="#9a9aa2" font-size="11">${d[0].day}</text><text x="590" y="158" fill="#9a9aa2" font-size="11" text-anchor="end">${d[d.length-1].day}</text>`;
+}
+
+function renderSources(run) {
+  if (!run.sources.length) {
+    $("sources").innerHTML = `<div class="empty">${run.running ? "🔍 Découverte des vidéos du moment…" : "Aucun passage en cours."}</div>`;
+    return;
+  }
+  $("sources").innerHTML = run.sources.slice().reverse().map(src => {
+    const idx = ORDER.indexOf(src.step);
+    const steps = ORDER.map((k, i) => {
+      let cls = "step";
+      if (src.error && i === idx) cls += " err";
+      else if (src.done || i < idx) cls += " done";
+      else if (i === idx) cls += " active";
+      let label = STEP_LABELS[k];
+      if (k === "render" && src.total) label += ` ${src.clips.length}/${src.total}`;
+      return `<div class="${cls}">${label}</div>`;
+    }).join("");
+    const minis = src.clips.map(c =>
+      `<span class="mini">#${c.n} ${c.start}s→${c.end}s · ${pill(c.status)}</span>`).join("");
+    return `<div class="src"><div class="t">${esc(src.title)}</div><div class="pipe">${steps}</div>
+            ${minis ? `<div class="minis">${minis}</div>` : ""}
+            ${src.error ? `<div class="mini" style="color:var(--red);margin-top:8px">${esc(src.error)}</div>` : ""}</div>`;
+  }).join("");
+}
+
+function renderDisc(run) {
+  if (!run.discovery.length) { $("disc").innerHTML = `<div class="empty">—</div>`; return; }
+  $("disc").innerHTML = "<ul>" + run.discovery.map(d =>
+    `<li><span>${d.platform === "twitch" ? "🟣" : "🔴"} ${esc(d.title)}</span>
+     <span class="vph">${d.vph.toLocaleString("fr-FR")}/h</span></li>`).join("") + "</ul>";
+}
+
+let lastClipsKey = "";
+function renderClips(clips) {
+  $("ccount").textContent = clips.length ? `(${clips.length})` : "";
+  const key = JSON.stringify(clips.map(c => [c.file, c.status, c.url, c.views]));
+  if (key === lastClipsKey) return;
+  lastClipsKey = key;
+  if (!clips.length) { $("clips").innerHTML = `<div class="empty">Les clips apparaîtront ici dès qu'ils sont montés.</div>`; return; }
+  $("clips").innerHTML = clips.map(c => {
+    const when = c.when ? new Date(c.when).toLocaleString("fr-FR", {day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}) : "";
+    return `<div class="clip">
+      <div class="th" data-f="${esc(c.file)}" style="background-image:url('/thumb?f=${encodeURIComponent(c.file)}')">
+        <span class="badge">${pill(c.status)}</span>
+        ${c.score != null ? `<span class="score">${esc(c.score)}/10</span>` : ""}
+        <div class="play">▶</div>
+      </div>
+      <div class="body">
+        <div class="hook">${esc(c.hook)}</div>
+        ${c.takeaway ? `<div class="verdict">✂️ ${esc(c.takeaway)}</div>` : ""}
+        <div class="meta">${c.status === "programmé" ? `📅 ${when}` : c.status === "en file" ? "⏳ attend le quota" : ""}
+          ${c.views != null ? ` · 👁 ${c.views.toLocaleString("fr-FR")} · ❤ ${(c.likes || 0).toLocaleString("fr-FR")}` : ""}</div>
+        ${c.url ? `<a href="${c.url}" target="_blank">Voir sur YouTube ↗</a>` : ""}
+        ${c.error ? `<div class="meta" style="color:var(--red)">${esc(c.error.slice(0, 120))}</div>` : ""}
+      </div></div>`;
+  }).join("");
+  document.querySelectorAll(".th").forEach(el => el.onclick = () => {
+    $("vid").src = "/video?f=" + encodeURIComponent(el.dataset.f);
+    $("dlg").showModal();
+  });
+}
+$("dlg").addEventListener("click", e => { if (e.target === $("dlg")) { $("vid").pause(); $("dlg").close(); } });
+
+const fmtWhen = w => w ? new Date(w).toLocaleString("fr-FR", {weekday: "short", day: "2-digit",
+  month: "2-digit", hour: "2-digit", minute: "2-digit"}) : "⏳ file d'attente";
+
+function renderUpcoming(el, list, showChan) {
+  if (!list.length) { el.innerHTML = `<div class="empty">Rien de programmé pour l'instant.</div>`; return; }
+  el.innerHTML = "<ul>" + list.map(u => `<li><span class="w">${esc(fmtWhen(u.when))}</span>
+    <span>${esc(u.hook || u.title)}${showChan ? ` <span class="c">· ${esc(u.channel_name)}</span>` : ""}</span>
+    ${u.url ? `<a href="${u.url}" target="_blank" style="color:var(--blue)">↗</a>` : "<span></span>"}</li>`).join("") + "</ul>";
+}
+
+let current = decodeURIComponent(location.hash.slice(1)) || "overview";
+let ovData = null;
+function go(id) { current = id; location.hash = id; lastClipsKey = ""; scrollTo(0, 0); tick(); }
+addEventListener("hashchange", () => {
+  const id = decodeURIComponent(location.hash.slice(1)) || "overview";
+  if (id !== current) go(id);
+});
+
+function renderTabs(chs) {
+  $("tabs").innerHTML = `<span class="tab ${current === "overview" ? "on" : ""}" data-id="overview">🌍 Vue d'ensemble</span>` +
+    chs.map(c => `<span class="tab ${current === (c.id || "main") ? "on" : ""}" data-id="${c.id || "main"}">
+      ${c.flag} ${esc(c.name.startsWith("REMPLACE") ? c.id : c.name)}${c.running ? '<span class="run"></span>' : ""}</span>`).join("");
+  document.querySelectorAll(".tab").forEach(t => t.onclick = () => go(t.dataset.id));
+}
+
+function renderOverview(o) {
+  const t = o.total;
+  $("ovstats").innerHTML = stat("Vues totales", fmtN(t.views)) + stat("Vues 24 h", "+" + fmtN(t.views_24h)) +
+    stat("Likes", fmtN(t.likes)) + stat("Clips créés", t.made) + stat("Programmés", t.scheduled) +
+    stat("En file", t.pending);
+  drawChart($("ovchart"), o.daily);
+  $("chcards").innerHTML = o.channels.map(c => `<div class="chcard" data-id="${c.id || "main"}">
+    <div class="n">${c.flag} ${esc(c.name.startsWith("REMPLACE") ? c.id + " (nom à définir)" : c.name)}
+      ${c.running ? '<span class="pill s-montage">en cours</span>' : ""}</div>
+    <div class="niche">${esc(c.niche)}</div>
+    <div class="row"><div><b>${fmtN(c.views)}</b><span>vues</span></div>
+      <div><b>+${fmtN(c.views_24h)}</b><span>24 h</span></div>
+      <div><b>${c.scheduled}</b><span>programmés</span></div></div>
+    <div class="nxt">Prochaine sortie : ${c.next ? `<b style="color:var(--text)">${esc(fmtWhen(c.next.when))}</b> · ${esc(c.next.hook)}` : "—"}
+      ${c.pending ? ` · ${c.pending} en file` : ""}</div>
+    ${!c.connected ? `<div class="warn">⚠ YouTube pas encore connecté (python youtube_auth.py${c.id ? " --channel " + c.id : ""})</div>` : ""}
+  </div>`).join("");
+  document.querySelectorAll(".chcard").forEach(el => el.onclick = () => go(el.dataset.id));
+  renderUpcoming($("ovup"), o.upcoming, true);
+}
+
+async function tick() {
+  try {
+    ovData = await (await fetch("/api/overview")).json();
+    if (ovData.error) throw new Error(ovData.error);
+    renderTabs(ovData.channels);
+    $("ov").classList.toggle("hidden", current !== "overview");
+    $("det").classList.toggle("hidden", current === "overview");
+    if (current === "overview") {
+      renderOverview(ovData);
+      const run = ovData.channels.some(c => c.running);
+      $("dot").className = "dot" + (run ? " on" : "");
+      $("livetxt").textContent = run ? "Un agent tourne" : "À l'arrêt";
+      $("chan").textContent = `${ovData.channels.length} chaînes YouTube`;
+      return;
+    }
+    const ch = current === "main" ? "" : current;
+    const r = await fetch("/api/status?ch=" + encodeURIComponent(ch));
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    renderUpcoming($("up"), d.upcoming || [], false);
+    renderStats(d.stats);
+    renderAnalytics(d.analytics);
+    renderSources(d.run);
+    renderDisc(d.run);
+    renderClips(d.clips);
+    $("log").textContent = (d.run.log || []).join("\n");
+    $("dot").className = "dot" + (d.run.running ? " on" : "");
+    $("livetxt").textContent = d.run.running ? `En cours · maj ${d.run.updated}` :
+      d.run.finished ? `Passage terminé · ${d.run.updated}` : "À l'arrêt";
+  } catch (e) {
+    $("livetxt").textContent = "Erreur : " + e.message;
+  }
+}
+tick();
+setInterval(tick, 3000);
+</script>
+</body>
+</html>

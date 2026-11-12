@@ -1,0 +1,126 @@
+# ===== Agent de clipping : configuration =====
+
+# ---------- Découverte : ce qui marche EN CE MOMENT ----------
+# L'agent scanne ces chaînes, classe leurs vidéos récentes par vues/heure
+# (= ce qui est chaud) et clippe les meilleures. Mets UNIQUEMENT des créateurs
+# dont tu as l'accord (campagnes Whop / Vyro / Clipping.net) ou toi-même.
+watch:
+  # Mesuré le 10/11/2026 (vues/heure de la dernière vidéo) :
+  # Amixem 78k, Inoxtag 70k, Joyca 29k, Gotaga 24k, Mastu 24k, Zack Nani 8k, Tibo InShape 4k
+  youtube:
+    - "@Amixem"
+    - "@Inoxtag"
+    - "@Joyca"
+    - "@Gotaga"
+    - "@Mastu"
+    - "@ZackNani"
+    - "@TiboInShape"
+  # Top clip de la semaine : Domingo 13,5k, Squeezie 6,8k, Kameto 3,1k, Amine 3k
+  twitch:
+    - "domingo"
+    - "squeezie"
+    - "kamet0"
+    - "aminematue"
+    - "mistermv"
+    - "ponce"
+    - "gotaga"
+  max_age_days: 10               # ignore ce qui est plus vieux
+  min_views: 100000              # ignore ce qui n'a pas décollé (YouTube)
+  twitch_min_views: 1000         # clips Twitch : seulement ceux qui ont déjà percé
+  videos_per_run: 4              # vidéos sources par passage
+  max_source_minutes: 120        # ignore les VODs trop longs (transcription lente sur CPU)
+
+# URLs précises à clipper en plus (optionnel)
+sources: []
+
+niche: "divertissement : moments forts de YouTubeurs et streamers français"
+language: fr
+
+# Ce que l'IA doit privilégier (modifie après 2 semaines selon tes stats).
+focus: >
+  Fous rires, réactions extrêmes, moments WTF, rage, clashs et embrouilles,
+  anecdotes incroyables, retournements de situation, phrases cultes.
+  Chaque clip doit se comprendre sans contexte et accrocher dès la première seconde.
+
+# Ton du texte affiché en haut (hook). Vide = ton neutre.
+hook_style: >
+  Fou, drôle et décalé, comme un pote qui commente le clip en story : exagération,
+  second degré, punchline, comparaison absurde, interpellation directe du spectateur.
+  Jamais un résumé plat et formel de la situation.
+  Exemples de ton : « Il a perdu toute sa dignité en 4 secondes 💀 »,
+  « Personne n'était prêt pour cette réponse », « Le moment où Gotaga a quitté son corps »,
+  « POV : ton cerveau a lâché en direct ».
+  À éviter : « Amixem raconte une anecdote », « Réaction de Joyca à un défi ».
+
+clips_per_video: 4
+min_seconds: 25
+max_seconds: 59
+
+# IA de sélection des moments :
+#   ollama    = GRATUIT, tourne sur ton PC (installe Ollama puis : ollama pull qwen3:8b)
+#   claude    = payant (quelques centimes par vidéo), meilleurs hooks, nécessite ANTHROPIC_API_KEY
+#   heuristic = gratuit, sans IA (choisit là où on parle le plus, hooks basiques)
+ai: ollama
+ollama_model: qwen3:8b
+model: claude-sonnet-5-5
+
+# Transcription locale : tiny | base | small | medium (medium est plus précis mais plus lent)
+whisper_model: small
+
+# ---------- DA ----------
+style:
+  font: "Arial Black"
+  sub_size: 82            # taille des sous-titres (sur 1920 px de haut)
+  sub_color: "FFFFFF"     # blanc
+  active_color: "00E5FF"  # mot prononcé : jaune (format BBGGRR de l'ASS, donc FFE500 en RVB)
+  words_per_line: 3
+  sub_margin_bottom: 560  # garde les sous-titres au-dessus des boutons TikTok/IG
+  hook_seconds: 5.0      # durée du texte en haut (hook) ; était 3.0
+  hook_size: 66
+  end_card_label: "LE VERDICT"   # titre de la carte de fin (ton commentaire)
+  layout: auto            # auto (visage détecté → crop, sinon fond flou) | crop | blur
+  # Montage « transformé » : plus le Short apporte du neuf, moins il risque d'être classé
+  # « contenu réutilisé » (refus de monétisation). Tout est gratuit et local, sauf la voix off
+  # (edge-tts, voix neuronales Microsoft, nécessite Internet).
+  edit:
+    jump_cuts: true         # coupe les blancs > max_gap secondes
+    max_gap: 0.35
+    silence_rel_db: 10      # pause = 10 dB sous le volume de la voix (baisse à 8 pour couper plus)
+    max_shot: 3.5           # changement de cadrage au moins toutes les 3,5 s, même sans pause
+    punch_zoom: 1.12        # plan serré à 112 % une coupe sur deux (1.0 = désactivé)
+    zoom_min_block: 2.0     # pas de changement de plan avant 2 s
+    grade: true             # contraste et saturation un peu relevés
+    keyword_pop: true       # chiffres, argent, mort, police... en couleur dans les sous-titres
+    credit: true            # « Source : <chaîne> » en haut pendant 4 s
+    progress_bar: true      # barre de progression en haut de l'écran
+    outro_voice: true       # le verdict est LU en voix off à la fin (commentaire original)
+    voice: null             # null = voix auto selon la langue (fr Henri, en Andrew, es-MX Jorge)
+    voice_rate: "+8%"
+    music_dir: branding/music   # dépose ici des musiques libres de droits (YouTube Audio Library)
+    music_volume: 0.07          # très bas, sous la voix
+
+# ---------- Publication : YouTube Shorts uniquement ----------
+publish:
+  backend: youtube_api
+  youtube_channel: "Clip by Cut"   # sécurité : n'envoie QUE sur cette chaîne
+  # Hashtags ajoutés à chaque Short (après #shorts, ceux trouvés par l'IA et le nom du créateur).
+  # Max 8 au total ; les 3 premiers s'affichent au-dessus du titre.
+  hashtags: ["clip", "youtubeur", "drole", "humour"]
+  timezone: Europe/Paris
+  per_day: 50                      # objectif long terme (plafonné par `ramp` ci-dessous)
+  # Montée en charge anti-spam : une chaîne neuve qui poste d'un coup beaucoup de
+  # contenu repris est repérée (mise à jour Shorts d'octobre 2026). On monte par paliers
+  # et on plafonne à 15/jour. Ne monte au-delà que si les vues suivent (pas de baisse).
+  ramp:
+    start: 2026-11-10
+    per_day_by_week: [3, 5, 8, 12, 15]
+  window: ["09:00", "21:30"]       # créneaux répartis régulièrement sur cette plage
+  # Quota gratuit de l'API YouTube : 10 000 unités/jour, 1 envoi = 1 600 → 6 envois/jour.
+  # Les clips en trop restent en file d'attente et partent les jours suivants.
+  # Pour monter à 50/jour : demande d'extension de quota gratuite (voir README),
+  # puis passe cette valeur à 50.
+  api_uploads_per_day: 6
+  # Le quota est PAR PROJET Google Cloud : les chaînes de channels/ qui gardent
+  # client_secret.json se partagent ces 6 envois. Un projet par chaîne = 6 chacune.
+  project_uploads_per_day: 6
+  max_backlog: 30                  # au-delà, l'agent arrête de produire de nouveaux clips
