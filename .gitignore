@@ -12,3 +12,4 @@ channels/*/run.log
 channels/saas_*/
 __pycache__/
 branding/music/
+*.log
