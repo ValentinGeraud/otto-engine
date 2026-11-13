@@ -161,17 +161,40 @@ def run_agent(agent, run_id=None):
         raise
 
 
+def upload_video(clip_id, path):
+    """Envoie la vidéo rendue au SaaS pour qu'elle soit visible dans Otto Clip (et servie à Buffer).
+    Vercel Blob en production (jeton limité à ce fichier, fourni par le SaaS), le SaaS lui-même en local."""
+    t = api("GET", f"/api/engine/clips/{clip_id}/video")
+    if t.get("mode") == "blob":
+        with open(path, "rb") as f:
+            r = requests.put(t["url"], data=f, headers=t["headers"], timeout=900)
+        if r.status_code >= 400:
+            raise RuntimeError(f"Vercel Blob → HTTP {r.status_code} : {r.text[:200]}")
+        api("PATCH", f"/api/engine/clips/{clip_id}/video", json={"url": r.json()["url"]})
+    elif t.get("mode") == "local":
+        with open(path, "rb") as f:
+            r = requests.put(f"{API}/api/engine/clips/{clip_id}/video", data=f, timeout=900,
+                             headers={"authorization": f"Bearer {TOKEN}", "content-type": "video/mp4"})
+        if r.status_code >= 400:
+            raise RuntimeError(f"envoi local → HTTP {r.status_code} : {r.text[:200]}")
+    else:
+        raise RuntimeError(t.get("error") or "stockage vidéo indisponible")
+
+
 def report_clips(agent):
+    """Envoie au SaaS chaque nouveau clip, puis sa vidéo. Les vidéos pas encore envoyées
+    (clips d'avant cette fonction, ou envoi raté) sont rattrapées au passage suivant."""
     d = ROOT / "channels" / channel_id(agent["id"])
-    state_file, sent_file = d / "state.json", d / "reported.json"
+    state_file, sent_file, video_file = d / "state.json", d / "reported.json", d / "uploaded.json"
     if not state_file.exists():
         return 0
     state = json.loads(state_file.read_text(encoding="utf-8"))
     sent = set(json.loads(sent_file.read_text(encoding="utf-8"))) if sent_file.exists() else set()
+    uploaded = set(json.loads(video_file.read_text(encoding="utf-8"))) if video_file.exists() else set()
     n = 0
     for c in state.get("clips", []):
         key = f"{agent['id']}:{c['file']}"
-        if key in sent:
+        if key in sent and key in uploaded:
             continue
         info = {}
         info_file = ROOT / "work" / Path(c["file"]).parent.name / "info.json"
@@ -183,13 +206,27 @@ def report_clips(agent):
                 "title": c.get("title"), "caption": c.get("caption"), "takeaway": c.get("takeaway"),
                 "fileKey": c["file"]}
         try:
+            # Idempotent côté SaaS (engineKey) : un clip déjà envoyé renvoie simplement son id.
             res = api("POST", "/api/engine/clips", json=body)
-            print(f"  clip envoyé : {c.get('hook')!r} → {res.get('status')}")
-            sent.add(key)
-            n += 1
+            if key not in sent:
+                print(f"  clip envoyé : {c.get('hook')!r} → {res.get('status')}")
+                sent.add(key)
+                n += 1
         except Exception as e:
             print(f"  ! envoi impossible : {e}")
+            continue
+        path = ROOT / c["file"]
+        if not path.is_file():
+            print(f"  ! vidéo introuvable : {c['file']}")
+            continue
+        try:
+            upload_video(res["id"], path)
+            uploaded.add(key)
+            print(f"  vidéo envoyée ({path.stat().st_size // 1_000_000} Mo)")
+        except Exception as e:
+            print(f"  ! vidéo non envoyée (nouvel essai au prochain passage) : {e}")
     sent_file.write_text(json.dumps(sorted(sent)), encoding="utf-8")
+    video_file.write_text(json.dumps(sorted(uploaded)), encoding="utf-8")
     return n
 
 
@@ -273,7 +310,9 @@ def publish_buffer(path, clip, channel, key=None):
     """Programme le clip via Buffer (même code que Clip by Cut) : vidéo hébergée sur Vercel Blob, post dans 10 min."""
     import buffer
     from datetime import datetime, timedelta, timezone
-    url = clip.get("_video_url") or buffer.host(path, path.name)
+    # La vidéo est déjà sur Vercel Blob (envoyée pour l'aperçu dans Otto Clip) : Buffer la récupère là.
+    hosted = clip.get("videoUrl") if str(clip.get("videoUrl") or "").startswith("https://") else None
+    url = clip.get("_video_url") or hosted or buffer.host(path, path.name)
     clip["_video_url"] = url
     when = datetime.now(timezone.utc) + timedelta(minutes=10)
     post = buffer.schedule(channel, url, hashtags_line(clip.get("caption"), clip.get("title")),
