@@ -184,7 +184,7 @@ def buffer_channel(account_id):
         return None
 
 
-def publish_buffer(path, clip, channel):
+def publish_buffer(path, clip, channel, key=None):
     """Programme le clip via Buffer (même code que Clip by Cut) : vidéo hébergée sur Vercel Blob, post dans 10 min."""
     import buffer
     from datetime import datetime, timedelta, timezone
@@ -192,7 +192,7 @@ def publish_buffer(path, clip, channel):
     clip["_video_url"] = url
     when = datetime.now(timezone.utc) + timedelta(minutes=10)
     post = buffer.schedule(channel, url, hashtags_line(clip.get("caption"), clip.get("title")),
-                           clip.get("title") or "", when)
+                           clip.get("title") or "", when, key=key)
     return f"buffer:{post}"
 
 
@@ -221,6 +221,13 @@ def publish_approved():
                     print(f"  programmé via Buffer ({via_buffer.get('service')}) : {pub['url']}")
                     continue
                 t = api("GET", f"/api/engine/accounts/{pub['accountId']}/token")
+                if t.get("via") == "buffer":
+                    # Chaîne connectée dans Otto Clip via le compte Buffer de l'utilisateur.
+                    ch = {"id": t["bufferChannelId"], "service": t["platform"]}
+                    pub["url"] = publish_buffer(path, clip, ch, key=t["token"])
+                    pub["status"], pub["error"] = "scheduled", None
+                    print(f"  programmé via Buffer ({t['platform']}) : {pub['url']}")
+                    continue
                 if t["platform"] == "youtube":
                     pub["url"] = publish_youtube(t["token"], path, clip)
                 elif t["platform"] == "tiktok":

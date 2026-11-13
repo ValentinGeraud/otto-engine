@@ -54,8 +54,9 @@ def _http(url, data=None, headers=None, method=None, timeout=300):
             raise RuntimeError(f"HTTP {e.code} sur {url.split('?')[0]} : {body}")
 
 
-def gql(query, variables=None):
-    key = _secret("api_key", "BUFFER_API_KEY")
+def gql(query, variables=None, key=None):
+    """key : jeton Buffer de l'utilisateur (Otto Clip) ; sinon la clé du propriétaire (secrets / env)."""
+    key = key or _secret("api_key", "BUFFER_API_KEY")
     if not key:
         raise RuntimeError("Clé API Buffer manquante (secrets/buffer.json > api_key)")
     out = _http(API, json.dumps({"query": query, "variables": variables or {}}).encode(),
@@ -100,7 +101,7 @@ CREATE = """mutation($input: CreatePostInput!) { createPost(input: $input) {
   ... on MutationError { message } } }"""
 
 
-def schedule(channel, video_url, text, title, when: datetime, category="24"):
+def schedule(channel, video_url, text, title, when: datetime, category="24", key=None):
     meta = {}
     service = channel["service"]
     if service == "instagram":
@@ -115,7 +116,7 @@ def schedule(channel, video_url, text, title, when: datetime, category="24"):
            "assets": [{"video": {"url": video_url, "metadata": {"thumbnailOffset": 1500}}}]}
     if meta:
         inp["metadata"] = meta
-    res = gql(CREATE, {"input": inp})["createPost"]
+    res = gql(CREATE, {"input": inp}, key)["createPost"]
     if "post" not in res:
         raise RuntimeError(res.get("message") or "refusé par Buffer")
     return res["post"]["id"]
