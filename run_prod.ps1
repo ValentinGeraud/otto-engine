@@ -4,7 +4,7 @@
 #   ENGINE_TOKEN=<same value as ENGINE_TOKEN in Vercel > otto-clip > Settings > Environment Variables>
 #
 # Usage:
-#   .\run_prod.ps1             # one pass every 30 minutes, until you close the window
+#   .\run_prod.ps1             # listens for "Lancer maintenant" in Otto Clip (~20 s) + a pass every 30 min
 #   .\run_prod.ps1 -Once       # a single pass
 #   .\run_prod.ps1 -DryRun     # shows the active agents and their config, creates nothing
 #   .\run_prod.ps1 -Minutes 60 # another interval
@@ -37,10 +37,16 @@ $extra = @()
 if ($DryRun) { $extra += '--dry-run' }
 if ($Agent) { $extra += @('--agent', $Agent) }
 
-while ($true) {
-	Write-Host "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm') · moteur Otto Clip → $env:OTTO_API_URL ====="
+Write-Host "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm') · moteur Otto Clip → $env:OTTO_API_URL ====="
+if ($Once -or $DryRun) {
 	python saas_worker.py @extra
-	if ($Once -or $DryRun) { break }
-	Write-Host "Prochain passage dans $Minutes min (Ctrl+C pour arrêter)."
-	Start-Sleep -Seconds ($Minutes * 60)
+} else {
+	# Reste à l'écoute : « Lancer maintenant » dans Otto Clip démarre ici en ~20 s,
+	# plus un passage automatique toutes les $Minutes min. Relance après une coupure réseau.
+	while ($true) {
+		python saas_worker.py --listen --every $Minutes
+		if ($LASTEXITCODE -eq 0) { break }
+		Write-Host 'Moteur arrêté sur une erreur : redémarrage dans 30 s (Ctrl+C pour arrêter).'
+		Start-Sleep -Seconds 30
+	}
 }

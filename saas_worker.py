@@ -22,6 +22,11 @@ Variables d'environnement :
   python saas_worker.py              # un passage complet
   python saas_worker.py --dry-run    # affiche les agents et leur config, ne lance rien
   python saas_worker.py --agent <id> # un seul agent
+  python saas_worker.py --listen     # reste à l'écoute : « Lancer maintenant » depuis le SaaS (~20 s)
+                                     # + un passage automatique toutes les 30 min (--every N, 0 = jamais)
+
+Chaque passage est suivi en direct dans le SaaS (étape en cours, clips prêts), et le SaaS
+affiche « Moteur en ligne » tant que ce worker l'interroge (OTTO_WORKER_ID, « pc » par défaut).
 """
 import argparse
 import json
@@ -41,6 +46,7 @@ PUBLISH = os.environ.get("OTTO_PUBLISH_ENABLED") == "true"
 MEDIA_BASE = os.environ.get("OTTO_MEDIA_BASE_URL", "").rstrip("/")
 BUFFER = os.environ.get("BUFFER_ENABLED") == "true"
 BUFFER_CHANNELS = ROOT / "secrets" / "buffer_channels.json"
+WORKER_ID = os.environ.get("OTTO_WORKER_ID", "pc")
 sys.stdout.reconfigure(encoding="utf-8")
 
 
@@ -69,11 +75,90 @@ def write_channel(agent):
     return d
 
 
-def run_pipeline(agent):
+def _state_clips(agent):
+    f = ROOT / "channels" / channel_id(agent["id"]) / "state.json"
+    try:
+        return len(json.loads(f.read_text(encoding="utf-8")).get("clips", []))
+    except Exception:
+        return 0
+
+
+def _step_of(line, title):
+    """Traduit la sortie d'agent.py en étape lisible dans le SaaS."""
+    t = f" · {title[:60]}" if title else ""
+    s = line.strip()
+    if s.startswith("[découverte]"):
+        return "Recherche des vidéos qui décollent"
+    if s.startswith("téléchargement"):
+        return "Téléchargement" + t
+    if s.startswith("transcription"):
+        return "Transcription" + t
+    if s.startswith("sélection des meilleurs moments"):
+        return "Choix des meilleurs moments (IA)" + t
+    if s.startswith("[") and "/" in s[:8] and "]" in s[:8]:
+        return f"Montage du clip {s[1:s.index(']')]}" + t
+    return None
+
+
+def run_pipeline(agent, run_id=None):
+    """Le pipeline d'origine (agent.py), sans publication : celle-ci passe par le SaaS.
+    Avec run_id, chaque étape est renvoyée au SaaS pour être suivie en direct."""
     ch = channel_id(agent["id"])
-    print(f"\n### Agent {agent['name']} → channels/{ch}")
-    # Le pipeline d'origine, inchangé ; la publication passe par le SaaS, jamais par agent.py ici.
-    subprocess.run([sys.executable, "agent.py", "--channel", ch, "--no-publish"], cwd=ROOT, check=False)
+    print(f"\n### Agent {agent['name']} → channels/{ch}", flush=True)
+    before = _state_clips(agent)
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+    p = subprocess.Popen([sys.executable, "-u", "agent.py", "--channel", ch, "--no-publish"], cwd=ROOT,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                         encoding="utf-8", errors="replace")
+    title, last_sent, info = "", 0.0, {"message": None}
+    for line in p.stdout:
+        if "Deprecated Feature" in line:
+            continue
+        print(line, end="", flush=True)
+        s = line.strip()
+        if s.startswith("=== "):
+            title = s[4:]
+        if s.startswith("Rien de nouveau à clipper"):
+            info["message"] = "Aucune nouvelle vidéo à clipper sur les chaînes surveillées."
+        if s.startswith("ERREUR sur"):
+            info["message"] = s[:300]
+        step = _step_of(line, title)
+        # étape nouvelle, ou signe de vie toutes les 60 s pendant les étapes longues
+        if run_id and (step or time.time() - last_sent > 60):
+            body = {"workerId": WORKER_ID, "clips": max(0, _state_clips(agent) - before)}
+            if step:
+                body["step"] = step
+            run_update(run_id, body)
+            last_sent = time.time()
+    p.wait()
+    return info["message"]
+
+
+def run_update(run_id, body):
+    try:
+        api("PATCH", f"/api/engine/runs/{run_id}", json={"workerId": WORKER_ID, **body})
+    except Exception as e:
+        print(f"  ! suivi du passage : {e}", flush=True)
+
+
+def run_agent(agent, run_id=None):
+    """Un passage complet pour un agent : production, envoi des clips au SaaS, suivi en direct."""
+    write_channel(agent)
+    if run_id:
+        run_update(run_id, {"status": "running", "step": "Démarrage"})
+    try:
+        message = run_pipeline(agent, run_id)
+        if run_id:
+            run_update(run_id, {"step": "Envoi des clips à Otto Clip"})
+        n = report_clips(agent)
+        if run_id:
+            run_update(run_id, {"status": "done", "step": None, "clips": n,
+                                "message": None if n else (message or "Aucun nouveau clip.")})
+        return n
+    except Exception as e:
+        if run_id:
+            run_update(run_id, {"status": "failed", "step": None, "message": str(e)[:300]})
+        raise
 
 
 def report_clips(agent):
@@ -244,26 +329,76 @@ def publish_approved():
         api("PATCH", f"/api/engine/clips/{clip['id']}", json={"status": status, "publications": pubs})
 
 
+def scheduled_pass(only=None, dry_run=False):
+    """Passage automatique : tous les agents actifs (ou un seul), chacun enregistré comme passage dans le SaaS."""
+    agents = api("GET", "/api/engine/agents")["agents"]
+    if only:
+        agents = [x for x in agents if x["id"] == only]
+    print(f"{len(agents)} agent(s) actif(s) avec des crédits.", flush=True)
+    for ag in agents:
+        if dry_run:
+            write_channel(ag)
+            print(yaml.safe_dump(ag["config"], allow_unicode=True, sort_keys=False))
+            continue
+        try:
+            run_id = api("POST", "/api/engine/runs", json={"workerId": WORKER_ID, "agentId": ag["id"]}).get("runId")
+        except Exception as e:
+            print(f"  ! passage non enregistré dans le SaaS : {e}", flush=True)
+            run_id = None
+        try:
+            run_agent(ag, run_id)
+        except Exception as e:
+            print(f"  ! agent {ag['name']} : {e}", flush=True)
+    if not dry_run:
+        publish_approved()
+
+
+def requested_runs():
+    """Passages demandés depuis le SaaS (« Lancer maintenant ») ; l'appel sert aussi de signe de vie."""
+    return api("GET", f"/api/engine/runs?worker={WORKER_ID}").get("runs", [])
+
+
+def listen(every_minutes):
+    """Reste à l'écoute : un « Lancer maintenant » démarre en ~20 s, et un passage complet toutes les N minutes."""
+    print(f"À l'écoute de {API} (moteur « {WORKER_ID} ») : demandes toutes les 20 s, "
+          f"passage automatique toutes les {every_minutes} min. Ctrl+C pour arrêter.", flush=True)
+    next_pass = time.time() + every_minutes * 60 if every_minutes else float("inf")
+    while True:
+        try:
+            for r in requested_runs():
+                print(f"\n>>> Lancé depuis Otto Clip : {r['agent']['name']}", flush=True)
+                try:
+                    run_agent(r["agent"], r["runId"])
+                except Exception as e:
+                    print(f"  ! {e}", flush=True)
+                publish_approved()
+            if time.time() >= next_pass:
+                print(f"\n===== {time.strftime('%Y-%m-%d %H:%M')} · passage automatique =====", flush=True)
+                scheduled_pass()
+                next_pass = time.time() + every_minutes * 60
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            print(f"  ! {str(e)[:300]} (nouvel essai dans 20 s)", flush=True)
+        time.sleep(20)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--agent")
+    ap.add_argument("--listen", action="store_true", help="reste à l'écoute des « Lancer maintenant » du SaaS")
+    ap.add_argument("--every", type=int, default=30, help="avec --listen : passage automatique toutes les N min (0 = jamais)")
     a = ap.parse_args()
     if len(TOKEN) < 32:
         sys.exit("ENGINE_TOKEN manquant (32 caractères minimum, même valeur que dans apps/web/.env.local).")
-    agents = api("GET", "/api/engine/agents")["agents"]
-    if a.agent:
-        agents = [x for x in agents if x["id"] == a.agent]
-    print(f"{len(agents)} agent(s) actif(s) avec des crédits.")
-    for ag in agents:
-        write_channel(ag)
-        if a.dry_run:
-            print(yaml.safe_dump(ag["config"], allow_unicode=True, sort_keys=False))
-            continue
-        run_pipeline(ag)
-        report_clips(ag)
-    if not a.dry_run:
-        publish_approved()
+    if a.listen:
+        try:
+            listen(a.every)
+        except KeyboardInterrupt:
+            print("\nArrêt du moteur.")
+        return
+    scheduled_pass(a.agent, a.dry_run)
 
 
 if __name__ == "__main__":
