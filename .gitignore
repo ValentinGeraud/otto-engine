@@ -18,3 +18,4 @@ models/
 remotion/node_modules/
 remotion/build/
 *.log
+channels/buffer_slots.json
