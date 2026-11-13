@@ -33,7 +33,12 @@ def load(channel=None, config_path=None):
         f = DIR / channel / "config.yaml"
         if not f.exists():
             raise SystemExit(f"Chaîne inconnue « {channel} ». Disponibles : {', '.join(available())}")
-        cfg = _merge(cfg, yaml.safe_load(f.read_text(encoding="utf-8")))
+        over = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        cfg = _merge(cfg, over)
+        # les comptes Buffer ne s'héritent JAMAIS : sinon les clips d'une chaîne secondaire
+        # partiraient sur le TikTok de la chaîne principale
+        cfg.setdefault("publish", {})["buffer_channels"] = \
+            (over.get("publish") or {}).get("buffer_channels") or []
         base = DIR / channel
     pub = cfg.setdefault("publish", {})
     cfg["_id"] = channel or ""

@@ -30,6 +30,10 @@ EDIT = {  # surchargeable dans config.yaml > style > edit
     "progress_bar": True,
     "outro_voice": True, "voice": None, "voice_rate": "+8%",
     "music_dir": "branding/music", "music_volume": 0.07,
+    "sfx": False, "sfx_volume": 0.5, "sfx_flash": True,  # bruitages (voir sfx.py)
+    "question_seconds": 2.2,  # temps de lecture de la question après la voix off
+    # passe Remotion (remotion_fx.py) : zooms, punch-in, tremblements, emojis, bruitages
+    "remotion": True, "fx_intensity": 1.0, "emoji_max": 5, "emoji_gap": 2.5,
 }
 VOICES = {"fr": "fr-FR-HenriNeural", "en": "en-US-AndrewNeural", "es": "es-MX-JorgeNeural"}
 CREDIT = {"fr": "Source", "en": "Source", "es": "Fuente"}
@@ -90,6 +94,10 @@ def _esc(s):
 
 
 # Variantes visuelles : évite que toutes les vidéos aient exactement le même gabarit
+# trajets du cadre pendant un plan zoomé : (x, y) de départ → d'arrivée, en fraction de la marge
+DRIFTS = [((0.15, 0.5), (0.85, 0.5)), ((0.85, 0.4), (0.15, 0.6)), ((0.5, 0.1), (0.5, 0.9)),
+          ((0.5, 0.5), (0.5, 0.5)), ((0.2, 0.8), (0.8, 0.2))]
+
 VARIANTS = [
     {"active": "00E5FF", "key": "365AFF", "hook_back": "&H00000000", "hook_text": "&H00FFFFFF",
      "bar": "0xFFE500"},  # jaune / noir
@@ -100,14 +108,14 @@ VARIANTS = [
 ]
 
 
-def variant_colors(st, variant):
-    """Couleurs du gabarit. Otto Clip : le style choisi (style.active_color, BBGGRR) remplace
-    la couleur du gabarit principal ; les autres gabarits tournent toujours (anti-répétition)."""
-    v = dict(VARIANTS[variant % len(VARIANTS)])
+def _variants(st):
+    """Palettes du gabarit. Otto Clip : la couleur choisie dans le SaaS (style.active_color, BBGGRR)
+    remplace celle du gabarit principal ; les autres gabarits tournent toujours (anti-répétition)."""
+    vs = [dict(v) for v in (st.get("variants") or VARIANTS)]
     c = st.get("active_color")
-    if c and variant % len(VARIANTS) == 0:
-        v["active"], v["bar"] = c, "0x" + c[4:6] + c[2:4] + c[0:2]
-    return v
+    if c and len(c) == 6:
+        vs[0]["active"], vs[0]["bar"] = c, "0x" + c[4:6] + c[2:4] + c[0:2]
+    return vs
 
 
 # ---------- découpe : jump cuts + punch-in ----------
@@ -186,10 +194,14 @@ def plan_segments(words, start, end, ed, spans=None):
             padded.append([a, b])
     if ed.get("max_shot"):
         padded = _split_long(padded, words, ed["max_shot"])
-    out, z, block = [], 1.0, 0.0
+    # niveaux de zoom parcourus en boucle (par défaut : plan large / plan serré en alternance)
+    levels = ed.get("zoom_levels") or [1.0, ed["punch_zoom"]]
+    out, li, block = [], 0, 0.0
+    z = levels[0]
     for i, (a, b) in enumerate(padded):
         if i and block >= ed["zoom_min_block"]:  # on change de cadrage sur la coupe
-            z, block = (ed["punch_zoom"] if z == 1.0 else 1.0), 0.0
+            li, block = (li + 1) % len(levels), 0.0
+            z = levels[li]
         out.append((a, b, z))
         block += b - a
     return out
@@ -208,9 +220,11 @@ def remap(words, segs):
 
 # ---------- sous-titres, hook, crédit, verdict ----------
 def build_ass(words, total, hook, st, path: Path, takeaway="", variant=0,
-              outro_at=None, credit="", lang="fr", ed=EDIT):
+              outro_at=None, credit="", lang="fr", ed=EDIT, question="", question_at=None):
     font = st["font"]
-    v = variant_colors(st, variant)
+    vs = _variants(st)   # palette propre à la chaîne (ex. GTA 6) sinon celle par défaut
+    v = vs[variant % len(vs)]
+    card = st.get("card_back", "&H00141414")   # fond de la carte de fin (verdict, question)
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -221,7 +235,8 @@ WrapStyle: 0
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Sub,{font},{st['sub_size']},&H00{st['sub_color']},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,2,80,80,{st['sub_margin_bottom']},1
 Style: Hook,{font},{st['hook_size']},{v['hook_text']},&H00FFFFFF,{v['hook_back']},&H00000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,260,1
-Style: Take,{font},{int(st['hook_size'] * 1.1)},&H00FFFFFF,&H00FFFFFF,&H00141414,&H00000000,-1,0,0,0,100,100,0,0,3,22,0,5,110,110,0,1
+Style: Take,{font},{int(st['hook_size'] * 1.1)},&H00FFFFFF,&H00FFFFFF,{card},&H00000000,-1,0,0,0,100,100,0,0,3,22,0,5,110,110,0,1
+Style: Question,{font},{int(st['hook_size'] * 0.95)},&H00FFFFFF,&H00FFFFFF,{card},&H00000000,-1,0,0,0,100,100,0,0,3,18,0,2,110,110,560,1
 Style: Credit,Arial,34,&H30FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,8,90,90,150,1
 
 [Events]
@@ -253,6 +268,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                      r"{\fad(150,0)\fscx90\fscy90\t(0,200,\fscx100\fscy100)}"
                      f"{{\\c&H00{active}&}}{st.get('end_card_label', 'À RETENIR')}{{\\r}}"
                      f"\\N{_esc(takeaway)}")
+    if question:  # question au spectateur : écrite sous le verdict, jamais lue
+        qa = question_at if question_at is not None else max(total - 2.0, 0)
+        lines.append(f"Dialogue: 2,{_ts(qa)},{_ts(total)},Question,,0,0,0,,"
+                     r"{\fad(120,0)\fscx70\fscy70\t(0,160,\fscx105\fscy105)\t(160,260,\fscx100\fscy100)}"
+                     f"{{\\c&H00{active}&}}{_esc(question)}")
     sub_end = outro_at if outro_at is not None else total
     for chunk in chunks:
         for i, w in enumerate(chunk):
@@ -304,8 +324,15 @@ def _music(ed, variant):
 
 
 # ---------- rendu ----------
-def render(video: Path, words, clip, st, out: Path, lang="fr"):
+def render(video: Path, words, clip, st, out: Path, lang="fr", person=None):
+    st0 = st
     ed = {**EDIT, **(st.get("edit") or {})}
+    use_rm = False
+    if ed["remotion"]:
+        import remotion_fx
+        use_rm = remotion_fx.available()
+        if not use_rm:
+            print("    (Remotion non installé : lance « npm install » dans clipper/remotion)")
     # On démarre pile sur le premier mot (pas de blanc au début)
     first = next((w for w in words if w["s"] >= clip["start"] - 0.3), None)
     start = first["s"] - 0.05 if first and first["s"] - clip["start"] < 2 else clip["start"]
@@ -331,25 +358,77 @@ def render(video: Path, words, clip, st, out: Path, lang="fr"):
                 voice_file = None
         if not outro:
             outro = 2.5
+    # question au spectateur : apparaît quand la voix off a fini (elle n'est pas lue)
+    question = clip.get("question", "") if takeaway else ""
+    question_at = None
+    if ed.get("end_question") and clip.get("question"):
+        # fin = la question seule, en grand (« ET TOI ? »), sans verdict ni voix off
+        takeaway, question = clip["question"], ""
+        st = {**st, "end_card_label": st.get("question_label") or
+              {"en": "WHAT ABOUT YOU?", "es": "¿Y TÚ?"}.get(lang, "ET TOI ?")}
+        if voice_file:
+            voice_file.unlink(missing_ok=True)
+            voice_file = None
+        outro = ed.get("question_card_seconds", 2.8)
+    if question:
+        question_at = body + outro - 0.3
+        outro += ed["question_seconds"]
     total = body + outro
 
     ass = out.with_suffix(".ass")
     build_ass(out_words, total, clip.get("hook", ""), st, ass, takeaway=takeaway,
               variant=clip.get("variant", 0), outro_at=body if takeaway else None,
-              credit=clip.get("credit", ""), lang=lang, ed=ed)
+              credit=clip.get("credit", ""), lang=lang, ed=ed,
+              question=question, question_at=question_at)
+
+    # bruitages
+    sfx_file, sfx_events = None, []
+    if ed["sfx"] and not use_rm:  # avec Remotion, les sons sont placés par remotion_fx
+        try:
+            import sfx
+            sfx_events = sfx.plan(out_words, segs, body, total, ed, hook=bool(clip.get("hook")),
+                                  question_at=question_at,
+                                  keyword_re=KEYWORDS if ed["keyword_pop"] else None)
+            if sfx_events:
+                sfx_file = sfx.build_track(sfx_events, total, out.with_suffix(".sfx.wav"),
+                                           ed["sfx_volume"])
+        except Exception as e:
+            print(f"    (bruitages ignorés : {str(e)[:80]})")
+            sfx_file, sfx_events = None, []
 
     # cadrage
     sw, sh = probe(video)
     layout = st.get("layout", "auto")
-    cx = face_center_x(video, start, end) if layout in ("auto", "crop") and sw > sh else None
+    seg_cx = {}
+    if person is not None and sw > sh:
+        # personne imposée (campagne) : le cadre la suit plan par plan ; si elle n'est pas
+        # reconnue sur un plan (plan large, profil), on garde sa position médiane
+        found = []
+        for i, (a, b, _z) in enumerate(segs):
+            xs = [x for x in person.track(video, a, b, max((b - a) / 3, 0.4)) if x is not None]
+            if xs:
+                seg_cx[i] = statistics.median(xs)
+                found.append(seg_cx[i])
+        cx = statistics.median(found) if found else None
+        # plan sans la personne (ex. gros plan sur l'invitée) : on cadre sur le visage présent
+        # plutôt que sur un décor vide ; plan large sans visage net : position médiane
+        for i, (a, b, _z) in enumerate(segs):
+            if i not in seg_cx:
+                xs = [x for x in (person.any_face(video, a + (b - a) * k / 4) for k in (1, 2, 3))
+                      if x is not None]
+                if xs:
+                    seg_cx[i] = statistics.median(xs)
+    else:
+        cx = face_center_x(video, start, end) if layout in ("auto", "crop") and sw > sh else None
 
-    def frame(src, tag):
+    def frame(src, tag, x_center=None):
         """Chaîne qui transforme [src] en image 1080x1920 étiquetée [tag]."""
+        x_center = x_center if x_center is not None else cx
         if sw <= sh * 0.6:  # déjà vertical
             return f"[{src}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}[{tag}]"
-        if cx is not None or layout == "crop":
+        if x_center is not None or layout == "crop":
             cw = int(sh * 9 / 16) // 2 * 2
-            x = int(min(max((cx or sw / 2) - cw / 2, 0), sw - cw))
+            x = int(min(max((x_center or sw / 2) - cw / 2, 0), sw - cw))
             return f"[{src}]crop={cw}:{sh}:{x}:0,scale={W}:{H}[{tag}]"
         return (f"[{src}]split[{tag}a][{tag}b];[{tag}a]scale={W}:{H}:force_original_aspect_ratio="
                 f"increase,crop={W}:{H},boxblur=25:2,eq=brightness=-0.15[{tag}bg];"
@@ -363,8 +442,15 @@ def render(video: Path, words, clip, st, out: Path, lang="fr"):
     for i, (a, b, z) in enumerate(segs):
         a, b = a - t0, b - t0
         g.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[s{i}]")
-        g.append(frame(f"s{i}", f"f{i}"))
+        g.append(frame(f"s{i}", f"f{i}", seg_cx.get(i)))
         zoom = (f"scale={int(W * z) // 2 * 2}:{int(H * z) // 2 * 2},crop={W}:{H}," if z > 1 else "")
+        if z > 1 and ed.get("zoom_drift"):
+            # le cadre glisse pendant le plan (gauche → droite, droite → gauche, haut → bas…)
+            (x0, y0), (x1, y1) = DRIFTS[i % len(DRIFTS)]
+            d = max(b - a, 0.2)
+            zoom = (f"scale={int(W * z) // 2 * 2}:{int(H * z) // 2 * 2},"
+                    f"crop={W}:{H}:x='(iw-ow)*({x0}+({x1 - x0})*min(t/{d:.3f},1))'"
+                    f":y='(ih-oh)*({y0}+({y1 - y0})*min(t/{d:.3f},1))',")
         g.append(f"[f{i}]{zoom}{norm_v}{grade}[v{i}]")
         # fondus seulement sur les vraies coupes (pas sur un simple changement de cadrage)
         cut_in = i == 0 or segs[i - 1][1] < segs[i][0] - 1e-3
@@ -379,7 +465,7 @@ def render(video: Path, words, clip, st, out: Path, lang="fr"):
     if outro:
         lb = segs[-1][1] - t0
         g.append(f"[0:v]trim=start={max(lb - 0.12, 0):.3f}:end={lb:.3f},setpts=PTS-STARTPTS[so]")
-        g.append(frame("so", "fo"))
+        g.append(frame("so", "fo", seg_cx.get(len(segs) - 1)))
         g.append(f"[fo]boxblur=22:2,eq=brightness=-0.28,{norm_v},"
                  f"tpad=stop_mode=clone:stop_duration={outro:.2f},trim=duration={outro:.2f}[vo]")
         if voice_file:
@@ -391,37 +477,110 @@ def render(video: Path, words, clip, st, out: Path, lang="fr"):
         n += 1
     g.append("".join(cat) + f"concat=n={n}:v=1:a=1[vc][ac]")
 
-    post = f"ass={ass.name}"
-    if ed["progress_bar"]:
-        bar = variant_colors(st, clip.get("variant", 0))["bar"]
+    # avec Remotion, le clip de base sort sans texte ni habillage : tout est ajouté ensuite
+    post = "null" if use_rm else f"ass={ass.name}"
+    if ed["progress_bar"] and not use_rm:
+        vs = _variants(st)
+        bar = vs[clip.get("variant", 0) % len(vs)]["bar"]
         post += (f",drawbox=x=0:y=0:w='iw*min(t/{body:.2f},1)':h=12:"
                  f"color={bar}@0.95:t=fill")
-    g.append(f"[vc]{post}[vout]")
+    if ed["sfx_flash"] and not use_rm:  # flash blanc bref sur chaque « boom »
+        for t, name in sfx_events:
+            if name == "boom":
+                post += (f",drawbox=x=0:y=0:w=iw:h=ih:color=white@0.35:t=fill:"
+                         f"enable='between(t,{t:.3f},{t + 0.07:.3f})'")
+    cta = {} if use_rm else st.get("cta") or {}
+    if cta.get("text"):
+        # texte imposé par une campagne, affiché pendant tout le clip (ex. « Watch the full
+        # documentary on Netflix ») : bandeau lisible, centré, au-dessus des boutons de l'appli
+        font = cta.get("font", "C\\:/Windows/Fonts/arialbd.ttf")
+        txt = cta["text"].replace("\\", "\\\\").replace(":", "\\:").replace("'", "’")
+        y = cta.get("y_from_top", 230) if cta.get("position", "top") == "top" \
+            else f"h-th-{cta.get('y_from_bottom', 420)}"
+        post += (f",drawtext=fontfile='{font}':text='{txt}':fontsize={cta.get('size', 46)}:"
+                 f"fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=18:"
+                 f"x=(w-tw)/2:y={y}")
+    wm = {} if use_rm else st.get("watermark") or {}
+    wm_file = (ROOT / wm["file"]) if wm.get("file") else None
+    if wm_file and not wm_file.exists():
+        raise SystemExit(f"Watermark introuvable : {wm_file} (exigé par la campagne)")
+    if wm_file:
+        # watermark imposé par une campagne : centré horizontalement, taille raisonnable,
+        # jamais collé au bord (top = sous la barre de progression, bottom = au-dessus des boutons)
+        idx = inputs.count("-i")
+        inputs += ["-loop", "1", "-i", str(wm_file.resolve())]
+        ww = int(W * wm.get("width", 0.4)) // 2 * 2
+        y = wm.get("y_from_top", 150) if wm.get("position") == "top" \
+            else f"H-h-{wm.get('y_from_bottom', 380)}"
+        g.append(f"[vc]{post}[vpost]")
+        g.append(f"[{idx}:v]scale={ww}:-2,format=rgba,colorchannelmixer=aa={wm.get('opacity', 0.9)}[wm]")
+        g.append(f"[vpost][wm]overlay=(W-w)/2:{y}:shortest=1[vout]")
+    else:
+        g.append(f"[vc]{post}[vout]")
     g.append("[ac]loudnorm=I=-14:TP=-1.5[an]")
+    aout = "[an]"
+    if sfx_file:
+        idx = inputs.count("-i")
+        inputs += ["-i", str(sfx_file.resolve())]
+        g.append(f"[{idx}:a]{norm_a}[fx]")
+        g.append(f"{aout}[fx]amix=inputs=2:duration=first:normalize=0[afx]")
+        aout = "[afx]"
     music = _music(ed, clip.get("variant", 0))
     if music:
-        idx = 2 if voice_file else 1
+        idx = inputs.count("-i")
         inputs += ["-stream_loop", "-1", "-i", str(music.resolve())]
         g.append(f"[{idx}:a]{norm_a},volume={ed['music_volume']},atrim=duration={total:.2f},"
                  f"afade=t=out:st={max(total - 1, 0):.2f}:d=1[mu]")
-        g.append("[an][mu]amix=inputs=2:duration=first:normalize=0[aout]")
-        aout = "[aout]"
-    else:
-        aout = "[an]"
+        g.append(f"{aout}[mu]amix=inputs=2:duration=first:normalize=0[amu]")
+        aout = "[amu]"
+    if sfx_file:  # évite la saturation quand voix + boom se superposent
+        g.append(f"{aout}alimiter=limit=0.95:level=disabled[alim]")
+        aout = "[alim]"
 
     script = out.with_suffix(".filter.txt")
     script.write_text(";\n".join(g), encoding="utf-8")
+    target = out.with_suffix(".base.mp4") if use_rm else out
+    quality = ["-preset", "veryfast", "-crf", "16"] if use_rm else ["-preset", "medium", "-crf", "20"]
     cmd = ["ffmpeg", "-y", "-loglevel", "error", *inputs,
            "-/filter_complex", script.name, "-map", "[vout]", "-map", aout,
-           "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out.name]
+           "-c:v", "libx264", *quality, "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", target.name]
     # cwd = dossier de sortie : évite les soucis de chemin Windows dans le filtre ass
     subprocess.run(cmd, cwd=out.parent, check=True)
     script.unlink(missing_ok=True)
     if voice_file:
         voice_file.unlink(missing_ok=True)
+    if sfx_file:
+        sfx_file.unlink(missing_ok=True)
+    if use_rm:
+        vs = _variants(st)
+        try:
+            props = remotion_fx.build_props(
+                target, words=out_words, segs=segs, body=body, total=total, st=st,
+                ed={**ed, "_lang": lang},
+                variant_colors=vs[clip.get("variant", 0) % len(vs)], hook=clip.get("hook", ""),
+                credit=(f"{CREDIT.get(lang, 'Source')} : {clip['credit']}"
+                        if clip.get("credit") and ed["credit"] else ""),
+                takeaway=takeaway, outro_at=body if takeaway else None, question=question,
+                question_at=question_at, keyword_re=KEYWORDS if ed["keyword_pop"] else None)
+            sfx_events = [(f["t"], f["kind"]) for f in props["fx"]]
+            remotion_fx.run(props, out)
+        except Exception as e:
+            print(f"    (Remotion en échec, montage ffmpeg classique : {str(e)[-300:]})")
+            target.unlink(missing_ok=True)
+            # secours ffmpeg : ses bruitages sont comiques, donc seulement pour le style « funny »
+            return render(video, words, clip, {**st0, "edit": {
+                **(st0.get("edit") or {}), "remotion": False,
+                "sfx": ed["sfx"] and ed.get("fx_style", "funny") == "funny"}},
+                          out, lang=lang, person=person)
+        target.unlink(missing_ok=True)
+        ass.unlink(missing_ok=True)
     cut = (end - start) - body
+    fx = ""
+    if sfx_events:
+        names = [n for _, n in sfx_events]
+        fx = ", bruitages " + " ".join(f"{n}×{names.count(n)}" for n in dict.fromkeys(names))
     print(f"    montage : {len(segs)} plans, {cut:.1f}s de blancs coupés, "
           f"outro {'voix off' if voice_file else 'muette' if outro else 'aucune'}"
-          f"{', musique' if music else ''} → {total:.0f}s")
+          f"{', musique' if music else ''}{fx}{', Remotion' if use_rm else ''} → {total:.0f}s")
     return out

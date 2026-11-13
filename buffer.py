@@ -29,10 +29,11 @@ SECRETS = ROOT / "secrets" / "buffer.json"
 API = "https://api.buffer.com"
 BLOB = "https://blob.vercel-storage.com"
 QUEUE_MAX = 10   # plan Free : 10 posts programmés par compte
+KEY_NAME = "api_key"   # clé du compte Buffer utilisé (publish.buffer_key) : api_key, api_key_gta…
 
 
 def _secret(name, env):
-    if os.environ.get(env):
+    if env and os.environ.get(env):
         return os.environ[env]
     try:
         return json.loads(SECRETS.read_text(encoding="utf-8")).get(name, "")
@@ -56,7 +57,7 @@ def _http(url, data=None, headers=None, method=None, timeout=300):
 
 def gql(query, variables=None, key=None):
     """key : jeton Buffer de l'utilisateur (Otto Clip) ; sinon la clé du propriétaire (secrets / env)."""
-    key = key or _secret("api_key", "BUFFER_API_KEY")
+    key = key or _secret(KEY_NAME, "BUFFER_API_KEY" if KEY_NAME == "api_key" else "")
     if not key:
         raise RuntimeError("Clé API Buffer manquante (secrets/buffer.json > api_key)")
     out = _http(API, json.dumps({"query": query, "variables": variables or {}}).encode(),

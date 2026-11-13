@@ -6,8 +6,14 @@ from pathlib import Path
 import yt_dlp
 
 
-def download(url, workdir: Path, language="fr") -> Path:
+def download(url, workdir: Path, language="fr", uploader="") -> Path:
     workdir.mkdir(parents=True, exist_ok=True)
+    local = Path(url)
+    if local.is_file():  # fichier fourni par une campagne (Dropbox, Drive…) : rien à télécharger
+        (workdir / "info.json").write_text(json.dumps(
+            {"title": local.stem, "uploader": uploader, "webpage_url": str(local),
+             "duration": None}, ensure_ascii=False), encoding="utf-8")
+        return local
     done = [p for p in workdir.glob("source.*") if p.suffix in (".mp4", ".mkv", ".webm")
             and p.name.count(".") == 1 and (workdir / "info.json").exists()]
     if done:
@@ -112,7 +118,10 @@ def _cuda_dlls():
 
 def transcribe(video: Path, language: str, model_size: str, url: str = ""):
     """Retourne une liste de mots [{w, s, e}] (texte, début, fin en secondes). Mis en cache."""
-    cache = video.parent / "transcript.json"
+    # vidéo téléchargée : work/<id>/source.mp4 → work/<id>/transcript.json
+    # fichier local (dossier de campagne) : un cache PAR vidéo, à côté d'elle
+    cache = video.parent / "transcript.json" if video.stem == "source" \
+        else video.with_name(video.stem + ".transcript.json")
     if cache.exists():
         return json.loads(cache.read_text(encoding="utf-8"))
     words = youtube_words(url, language, video.parent) if url else None

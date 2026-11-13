@@ -98,6 +98,18 @@ style:
     voice_rate: "+8%"
     music_dir: branding/music   # dépose ici des musiques libres de droits (YouTube Audio Library)
     music_volume: 0.07          # très bas, sous la voix
+    sfx: true                   # bruitages (whoosh, boom + flash, boing sur les rires, pop, ding)
+    sfx_volume: 0.5
+    sfx_max_boom: 3
+    # ---- Remotion (gratuit, local : clipper/remotion) : zooms, punch-in, tremblements, flashs,
+    # emojis, sous-titres animés, bruitages placés selon ce qui se passe, animations abonne-toi/like.
+    # Si Remotion plante, le clip est monté à l'ancienne (ffmpeg) : jamais de clip perdu.
+    remotion: true
+    fx_style: funny             # funny = comique (boom, boing, emojis) ; tension = sans effet comique
+    fx_intensity: 1.0
+    sfx_density: 2.2
+    emoji_max: 5
+    engage_anim: true           # bouton « S'abonner » cliqué + like en cœur
 
 # ---------- Publication : YouTube Shorts uniquement ----------
 publish:

@@ -12,4 +12,9 @@ channels/*/run.log
 channels/saas_*/
 __pycache__/
 branding/music/
+branding/sfx/_remotion/
+branding/sfx/_apercu/
+models/
+remotion/node_modules/
+remotion/build/
 *.log

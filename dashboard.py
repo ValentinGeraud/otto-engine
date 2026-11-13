@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
+from zoneinfo import ZoneInfo
 
 import analytics
 import channels
@@ -185,6 +186,173 @@ def status(ch=""):
             "lang": cfg.get("language"),
             "connected": cfg["_token"].exists(),
         },
+    }
+
+
+# ---------- Calendrier des sorties ----------
+def calendar(ch="", days_back=10, days_ahead=21):
+    """Toutes les sorties : publiées, programmées sur YouTube, et la file d'attente projetée
+    sur les prochains créneaux (en tenant compte des clips épinglés et des jours sans sortie)."""
+    from datetime import timedelta
+    cfg, state, an = _chan(ch)
+    pub = cfg.get("publish") or {}
+    tz = ZoneInfo(pub.get("timezone", "Europe/Paris"))
+    now = datetime.now(timezone.utc)
+    lo, hi = now - timedelta(days=days_back), now + timedelta(days=days_ahead)
+    pins = pub.get("_pins") or {}
+    ev, pending = [], []
+    for c in state.get("clips", []):
+        p = c.get("publish") or {}
+        base = {"key": c.get("file"), "hook": c.get("hook") or c.get("title"), "score": c.get("score")}
+        if p.get("youtube_id") and p.get("when"):
+            w = datetime.fromisoformat(p["when"])
+            if lo <= w <= hi:
+                vid = p["youtube_id"]
+                ev.append(base | {"when": w.isoformat(), "status": "publié" if w <= now else "programmé",
+                                  "locked": True, "url": f"https://youtu.be/{vid}", "id": vid,
+                                  "views": an["per_video"].get(vid, {}).get("views")})
+        elif p.get("pending"):
+            pending.append(base)
+    # projection de la file : d'abord les épinglés, puis les créneaux libres dans l'ordre
+    soon = datetime.now(tz) + timedelta(minutes=30)
+
+    def pinned_at(c):
+        w = pins.get(c["key"])
+        w = datetime.fromisoformat(w) if w else None
+        return w if w and w > soon else None
+
+    rest = [c for c in pending if not pinned_at(c)]
+    free = []
+    if pub and rest:
+        try:
+            free = publish.next_slots(pub, list(state.get("taken_slots", [])), min(len(rest), 200))
+        except Exception:
+            free = []
+    for c in pending:
+        w = pinned_at(c)
+        pinned = bool(w)
+        if not w:
+            if not free:
+                continue
+            w = free.pop(0)
+        if w <= hi:
+            ev.append(c | {"when": w.isoformat(), "status": "prévu", "locked": False, "pinned": pinned})
+    ev.sort(key=lambda e: e["when"])
+    return ev
+
+
+def schedule_info(ch=""):
+    cfg, state, _ = _chan(ch)
+    pub = cfg.get("publish") or {}
+    if not pub:
+        return {}
+    return {"timezone": pub.get("timezone", "Europe/Paris"), "window": pub.get("window"),
+            "slots_today": publish.day_slots(pub), "custom": bool(pub.get("_custom_slots")),
+            "slots": pub.get("slots") if pub.get("_custom_slots") else None,
+            "ramp_today": publish.ramp_today(pub), "per_day": pub.get("per_day"),
+            "api_per_day": pub.get("api_uploads_per_day", 6),
+            "off_days": pub.get("_off_days") or [], "pins": len(pub.get("_pins") or {})}
+
+
+# ---------- Analytics détaillées ----------
+def _hour_floor(dt):
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
+def analytics_detail(ch=""):
+    """Courbe horaire des vues cumulées, tableau de chaque Short, records."""
+    from datetime import timedelta
+    cfg, state, an = _chan(ch)
+    raw = analytics.load(cfg["_analytics"])
+    vids = raw.get("videos", {})
+    tz = ZoneInfo((cfg.get("publish") or {}).get("timezone", "Europe/Paris"))
+    meta = {}
+    for c in state.get("clips", []):
+        p = c.get("publish") or {}
+        if p.get("youtube_id"):
+            meta[p["youtube_id"]] = {"hook": c.get("hook") or c.get("title"), "when": p.get("when"),
+                                     "file": c.get("file"), "score": c.get("score")}
+    hist = {}
+    for vid, v in vids.items():
+        pts = []
+        for t, n in v.get("history", []):
+            try:
+                pts.append((datetime.fromisoformat(t), int(n)))
+            except Exception:
+                pass
+        if pts:
+            hist[vid] = sorted(pts)
+    now = datetime.now()
+    series = []
+    if hist:
+        start = _hour_floor(min(p[0][0] for p in hist.values()))
+        start = max(start, _hour_floor(now) - timedelta(days=14))
+        h, idx, last = start, {k: 0 for k in hist}, {k: 0 for k in hist}
+        while h <= _hour_floor(now):
+            end = h + timedelta(hours=1)
+            for k, pts in hist.items():
+                while idx[k] < len(pts) and pts[idx[k]][0] < end:
+                    last[k] = pts[idx[k]][1]
+                    idx[k] += 1
+            series.append([h.strftime("%Y-%m-%dT%H:00"), sum(last.values())])
+            h = end
+    table = []
+    for vid, v in vids.items():
+        m = meta.get(vid, {})
+        pts = hist.get(vid, [])
+        recent = [p for p in pts if p[0] >= now - timedelta(hours=3)]
+        vph = 0
+        if len(recent) >= 2 and recent[-1][0] > recent[0][0]:
+            vph = (recent[-1][1] - recent[0][1]) / ((recent[-1][0] - recent[0][0]).total_seconds() / 3600)
+        pub_at = None
+        if m.get("when"):
+            try:
+                pub_at = datetime.fromisoformat(m["when"])
+            except Exception:
+                pass
+        age_h = (datetime.now(timezone.utc) - pub_at).total_seconds() / 3600 if pub_at else None
+        first24 = None
+        if pub_at and pts and age_h and age_h >= 24:
+            lim = pub_at.astimezone().replace(tzinfo=None) + timedelta(hours=24)
+            within = [p[1] for p in pts if p[0] <= lim]
+            first24 = within[-1] if within else None
+        spark, seen = [], set()   # une valeur par heure
+        for t, n in pts:
+            key = t.strftime("%m%d%H")
+            if key not in seen:
+                seen.add(key)
+                spark.append(n)
+        views = v.get("views", 0)
+        table.append({"id": vid, "hook": m.get("hook") or vid, "when": m.get("when"),
+                      "file": m.get("file"), "score": m.get("score"), "views": views,
+                      "likes": v.get("likes", 0), "comments": v.get("comments", 0),
+                      "privacy": v.get("privacy"), "vph": round(vph, 1),
+                      "age_h": round(age_h, 1) if age_h is not None else None,
+                      "first24": first24, "spark": spark[-48:],
+                      "like_rate": round(v.get("likes", 0) / views * 100, 2) if views else 0})
+    table.sort(key=lambda r: r["views"], reverse=True)
+    live = [r for r in table if r["age_h"] is None or r["age_h"] >= 0]
+    views = sorted(r["views"] for r in live)
+    by_hour = {}
+    for r in live:
+        if r["when"] and r["age_h"] and r["age_h"] >= 12:  # assez de recul pour comparer
+            hh = datetime.fromisoformat(r["when"]).astimezone(tz).hour
+            by_hour.setdefault(hh, []).append(r["first24"] or r["views"])
+    return {
+        "series": series,
+        "table": table[:80],
+        "kpi": {
+            "shorts": len(live),
+            "avg": round(sum(views) / len(views)) if views else 0,
+            "median": views[len(views) // 2] if views else 0,
+            "best": table[0]["views"] if table else 0,
+            "last_hour": series[-1][1] - series[-2][1] if len(series) >= 2 else 0,
+            "like_rate": round(sum(r["likes"] for r in live) / max(sum(views), 1) * 100, 2),
+            "comment_rate": round(sum(r["comments"] for r in live) / max(sum(views), 1) * 100, 3),
+            "over_1k": sum(v >= 1000 for v in views),
+        },
+        "by_hour": {str(k): round(sum(v) / len(v)) for k, v in sorted(by_hour.items())},
+        "updated": raw.get("updated"),
     }
 
 

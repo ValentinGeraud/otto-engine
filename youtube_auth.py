@@ -28,6 +28,15 @@ if cfg["_id"] and not cfg["publish"].get("youtube_channel_id"):
     except RuntimeError as e:
         sys.exit(str(e))
     name, cid = ch["snippet"]["title"], ch["id"]
+    # garde-fou : une chaîne déjà utilisée par une autre config ne peut pas être reprise
+    others = [channels.load(None)] + [channels.load(c) for c in channels.available() if c != cfg["_id"]]
+    for o in others:
+        op = o["publish"]
+        if cid == op.get("youtube_channel_id") or name.strip().lower() == \
+                str(op.get("youtube_channel", "")).strip().lower():
+            publish.TOKEN.unlink(missing_ok=True)
+            sys.exit(f"Refusé, accès supprimé : « {name} » est déjà la chaîne de "
+                     f"{o['_id'] or 'la chaîne principale'}. Relance et choisis la bonne chaîne.")
     if "REMPLACE" not in expected and name.strip().lower() != expected.strip().lower():
         publish.TOKEN.unlink(missing_ok=True)
         sys.exit(f"Mauvaise chaîne, accès supprimé : connecté à « {name} » au lieu de "
