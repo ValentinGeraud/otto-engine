@@ -14,6 +14,10 @@ Variables d'environnement :
   ENGINE_TOKEN          même valeur que dans apps/web/.env.local (32 caractères minimum)
   OTTO_PUBLISH_ENABLED  "true" pour publier vraiment (désactivé par défaut)
   OTTO_MEDIA_BASE_URL   adresse publique où les fichiers de clips sont servis (requis par Instagram)
+  BUFFER_ENABLED        "true" pour passer par Buffer (buffer.py) au lieu des API officielles, pour les
+                        comptes listés dans secrets/buffer_channels.json {"<accountId SaaS>": {"id": "...",
+                        "service": "tiktok"}}. Branché mais désactivé par défaut. Il faut aussi
+                        OTTO_PUBLISH_ENABLED=true et la clé BUFFER_API_KEY (+ BLOB_READ_WRITE_TOKEN).
 
   python saas_worker.py              # un passage complet
   python saas_worker.py --dry-run    # affiche les agents et leur config, ne lance rien
@@ -35,6 +39,8 @@ API = os.environ.get("OTTO_API_URL", "http://localhost:3000").rstrip("/")
 TOKEN = os.environ.get("ENGINE_TOKEN", "")
 PUBLISH = os.environ.get("OTTO_PUBLISH_ENABLED") == "true"
 MEDIA_BASE = os.environ.get("OTTO_MEDIA_BASE_URL", "").rstrip("/")
+BUFFER = os.environ.get("BUFFER_ENABLED") == "true"
+BUFFER_CHANNELS = ROOT / "secrets" / "buffer_channels.json"
 sys.stdout.reconfigure(encoding="utf-8")
 
 
@@ -168,6 +174,28 @@ def publish_instagram(token, path, clip, ig_user_id):
     return f"instagram:{p['id']}"
 
 
+def buffer_channel(account_id):
+    """Compte Buffer associé à un compte du SaaS, seulement si Buffer est activé."""
+    if not BUFFER:
+        return None
+    try:
+        return json.loads(BUFFER_CHANNELS.read_text(encoding="utf-8")).get(account_id)
+    except Exception:
+        return None
+
+
+def publish_buffer(path, clip, channel):
+    """Programme le clip via Buffer (même code que Clip by Cut) : vidéo hébergée sur Vercel Blob, post dans 10 min."""
+    import buffer
+    from datetime import datetime, timedelta, timezone
+    url = clip.get("_video_url") or buffer.host(path, path.name)
+    clip["_video_url"] = url
+    when = datetime.now(timezone.utc) + timedelta(minutes=10)
+    post = buffer.schedule(channel, url, hashtags_line(clip.get("caption"), clip.get("title")),
+                           clip.get("title") or "", when)
+    return f"buffer:{post}"
+
+
 def publish_approved():
     if not PUBLISH:
         print("\nPublication désactivée (OTTO_PUBLISH_ENABLED ≠ true) : les clips restent dans le SaaS.")
@@ -186,6 +214,12 @@ def publish_approved():
             if pub["status"] in ("published", "scheduled"):
                 continue
             try:
+                via_buffer = buffer_channel(pub["accountId"])
+                if via_buffer:
+                    pub["url"] = publish_buffer(path, clip, via_buffer)
+                    pub["status"], pub["error"] = "scheduled", None
+                    print(f"  programmé via Buffer ({via_buffer.get('service')}) : {pub['url']}")
+                    continue
                 t = api("GET", f"/api/engine/accounts/{pub['accountId']}/token")
                 if t["platform"] == "youtube":
                     pub["url"] = publish_youtube(t["token"], path, clip)
@@ -198,8 +232,8 @@ def publish_approved():
             except Exception as e:
                 pub["status"], pub["error"] = "failed", str(e)[:300]
                 print(f"  ! {pub['platform']} : {e}")
-        done = [p for p in pubs if p["status"] == "published"]
-        status = "published" if done else ("failed" if pubs else "approved")
+        done = [p for p in pubs if p["status"] in ("published", "scheduled")]
+        status = ("published" if any(p["status"] == "published" for p in pubs) else "scheduled") if done             else ("failed" if pubs else "approved")
         api("PATCH", f"/api/engine/clips/{clip['id']}", json={"status": status, "publications": pubs})
 
 
