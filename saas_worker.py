@@ -306,15 +306,63 @@ def buffer_channel(account_id):
         return None
 
 
-def publish_buffer(path, clip, channel, key=None):
-    """Programme le clip via Buffer (même code que Clip by Cut) : vidéo hébergée sur Vercel Blob, post dans 10 min."""
+SLOTS_FILE = ROOT / "channels" / "buffer_slots.json"
+
+
+def _ramp_today(pub_cfg, today):
+    ramp = pub_cfg.get("ramp") or {}
+    per_week = ramp.get("per_day_by_week") or [pub_cfg.get("per_day") or 3]
+    try:
+        from datetime import date
+        week = max(0, (today - date.fromisoformat(ramp["start"])).days // 7)
+    except Exception:
+        week = 0
+    return max(1, int(per_week[min(week, len(per_week) - 1)]))
+
+
+def next_slot(account_id, pub_cfg):
+    """Prochain créneau libre pour ce compte, au rythme de l'agent : N posts par jour (montée en
+    puissance par semaine) répartis régulièrement dans la fenêtre horaire, jamais avant 10 min.
+    Les créneaux déjà pris sont gardés dans channels/buffer_slots.json."""
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(pub_cfg.get("timezone") or "Europe/Paris")
+    start_s, end_s = (pub_cfg.get("window") or ["09:00", "21:30"])[:2]
+    try:
+        taken = json.loads(SLOTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        taken = {}
+    now = datetime.now(timezone.utc)
+    used = {t for t in taken.get(account_id, []) if datetime.fromisoformat(t) > now - timedelta(days=1)}
+    earliest = now + timedelta(minutes=10)
+    day = earliest.astimezone(tz).date()
+    for _ in range(60):
+        a = datetime.combine(day, datetime.strptime(start_s, "%H:%M").time(), tz)
+        b = datetime.combine(day, datetime.strptime(end_s, "%H:%M").time(), tz)
+        n = _ramp_today(pub_cfg, day)
+        step = (b - a) / n
+        for i in range(n):
+            slot = (a + step * i + step / 2).astimezone(timezone.utc).replace(second=0, microsecond=0)
+            key = slot.isoformat()
+            if slot >= earliest and key not in used:
+                taken[account_id] = sorted(used | {key})
+                SLOTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                SLOTS_FILE.write_text(json.dumps(taken, indent=1), encoding="utf-8")
+                return slot
+        day += timedelta(days=1)
+    return earliest
+
+
+def publish_buffer(path, clip, channel, key=None, when=None):
+    """Programme le clip via Buffer (même code que Clip by Cut) au créneau `when` (sinon dans 10 min).
+    La vidéo est servie à Buffer depuis Vercel Blob."""
     import buffer
     from datetime import datetime, timedelta, timezone
     # La vidéo est déjà sur Vercel Blob (envoyée pour l'aperçu dans Otto Clip) : Buffer la récupère là.
     hosted = clip.get("videoUrl") if str(clip.get("videoUrl") or "").startswith("https://") else None
     url = clip.get("_video_url") or hosted or buffer.host(path, path.name)
     clip["_video_url"] = url
-    when = datetime.now(timezone.utc) + timedelta(minutes=10)
+    when = when or datetime.now(timezone.utc) + timedelta(minutes=10)
     post = buffer.schedule(channel, url, hashtags_line(clip.get("caption"), clip.get("title")),
                            clip.get("title") or "", when, key=key)
     return f"buffer:{post}"
@@ -328,7 +376,12 @@ def publish_approved():
     if not data.get("publishEnabled"):
         print("\nPublication désactivée côté SaaS.")
         return
+    try:
+        cfgs = {a["id"]: a["config"].get("publish") or {} for a in api("GET", "/api/engine/agents")["agents"]}
+    except Exception:
+        cfgs = {}
     for clip in data.get("clips", []):
+        pub_cfg = cfgs.get(clip.get("agentId")) or {}
         path = ROOT / (clip.get("fileKey") or "")
         pubs = clip.get("publications") or []
         if not path.is_file():
@@ -340,17 +393,19 @@ def publish_approved():
             try:
                 via_buffer = buffer_channel(pub["accountId"])
                 if via_buffer:
-                    pub["url"] = publish_buffer(path, clip, via_buffer)
-                    pub["status"], pub["error"] = "scheduled", None
+                    when = next_slot(pub["accountId"], pub_cfg)
+                    pub["url"] = publish_buffer(path, clip, via_buffer, when=when)
+                    pub["status"], pub["error"], pub["scheduledAt"] = "scheduled", None, when.isoformat()
                     print(f"  programmé via Buffer ({via_buffer.get('service')}) : {pub['url']}")
                     continue
                 t = api("GET", f"/api/engine/accounts/{pub['accountId']}/token")
                 if t.get("via") == "buffer":
                     # Chaîne connectée dans Otto Clip via le compte Buffer de l'utilisateur.
                     ch = {"id": t["bufferChannelId"], "service": t["platform"]}
-                    pub["url"] = publish_buffer(path, clip, ch, key=t["token"])
-                    pub["status"], pub["error"] = "scheduled", None
-                    print(f"  programmé via Buffer ({t['platform']}) : {pub['url']}")
+                    when = next_slot(pub["accountId"], pub_cfg)
+                    pub["url"] = publish_buffer(path, clip, ch, key=t["token"], when=when)
+                    pub["status"], pub["error"], pub["scheduledAt"] = "scheduled", None, when.isoformat()
+                    print(f"  programmé via Buffer ({t['platform']}) le {when.astimezone().strftime('%d/%m %H:%M')} : {pub['url']}")
                     continue
                 if t["platform"] == "youtube":
                     pub["url"] = publish_youtube(t["token"], path, clip)
