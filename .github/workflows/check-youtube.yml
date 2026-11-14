@@ -1,0 +1,27 @@
+# Test manuel : YouTube laisse-t-il le moteur télécharger depuis GitHub Actions ?
+# (liste une chaîne surveillée + télécharge une courte vidéo, sans rien publier)
+name: Test téléchargement YouTube
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Chaîne à lister"
+        default: "@atowrl"
+      video:
+        description: "Vidéo à télécharger"
+        default: "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q -U yt-dlp
+      - name: Liste de la chaîne
+        run: yt-dlp --flat-playlist --playlist-end 5 --print "%(id)s %(title)s" "https://www.youtube.com/${{ inputs.channel }}/videos"
+      - name: Téléchargement
+        run: yt-dlp -f "bv*[height<=720]+ba/b[height<=720]" -o test.mp4 "${{ inputs.video }}" && ls -la test.mp4
