@@ -50,18 +50,29 @@ jobs:
         with:
           deno-version: v2.x
 
-      # Cookies d'un compte YouTube SECONDAIRE (secret YT_COOKIES, fichier cookies.txt au format Netscape) :
-      # sans eux, YouTube bloque les téléchargements depuis les serveurs GitHub.
+      # Cookies YouTube : YouTube les renouvelle à chaque usage, une copie figée finit par expirer.
+      # On garde donc la version renouvelée d'une session à l'autre (cache, CHIFFRÉE avec ENGINE_TOKEN car le
+      # dépôt est public). Si le secret YT_COOKIES change (nouvel export), c'est lui qui repart.
+      - name: Cookies renouvelés (cache)
+        uses: actions/cache/restore@v4
+        with:
+          path: .yt
+          key: yt-cookies-${{ github.run_id }}
+          restore-keys: yt-cookies-
+
       - name: Cookies YouTube
         env:
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
-          if [ -n "$YT_COOKIES" ]; then
-            python ytcookies.py "$RUNNER_TEMP/yt-cookies.txt"
-            echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+          if [ -z "$YT_COOKIES" ]; then echo "::warning::Pas de secret YT_COOKIES : YouTube risque de bloquer les téléchargements"; exit 0; fi
+          sha=$(printf '%s' "$YT_COOKIES" | sha256sum | cut -c1-16)
+          echo "YT_SECRET_SHA=$sha" >> "$GITHUB_ENV"
+          if [ -f .yt/cookies.enc ] && [ "$(cat .yt/secret.sha 2>/dev/null)" = "$sha" ] &&              openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ENGINE_TOKEN -in .yt/cookies.enc -out "$RUNNER_TEMP/yt-cookies.txt" 2>/dev/null; then
+            echo "cookies renouvelés repris de la session précédente"
           else
-            echo "::warning::Pas de secret YT_COOKIES : YouTube risque de bloquer les téléchargements"
+            python ytcookies.py "$RUNNER_TEMP/yt-cookies.txt"
           fi
+          echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
 
       - name: Outils système (ffmpeg, polices)
         run: |
@@ -125,3 +136,17 @@ jobs:
             channels/**/*.json
             work/**/*.json
           key: engine-state-${{ github.run_id }}
+
+      - name: Garde des cookies renouvelés
+        if: always() && env.YTDLP_COOKIES != ''
+        run: |
+          mkdir -p .yt
+          openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ENGINE_TOKEN -in "$YTDLP_COOKIES" -out .yt/cookies.enc
+          echo "$YT_SECRET_SHA" > .yt/secret.sha
+
+      - name: Sauvegarde des cookies
+        if: always() && env.YTDLP_COOKIES != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .yt
+          key: yt-cookies-${{ github.run_id }}
