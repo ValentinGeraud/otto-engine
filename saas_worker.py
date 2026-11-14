@@ -501,7 +501,10 @@ def listen(every_minutes, max_minutes=0, first_pass=False):
             for r in requested_runs():
                 print(f"\n>>> Lancé depuis Otto Clip : {r['agent']['name']}", flush=True)
                 try:
-                    run_agent(r["agent"], r["runId"])
+                    if r.get("redo"):   # reprise de vidéos précises, clips à valider
+                        redo_agent(r["agent"], r["redo"], r["runId"])
+                    else:
+                        run_agent(r["agent"], r["runId"])
                 except Exception as e:
                     print(f"  ! {e}", flush=True)
                 publish_approved()
@@ -540,6 +543,21 @@ def main():
         redo(a.agent, [u.strip() for u in a.redo.split(",") if u.strip()])
         return
     scheduled_pass(a.agent, a.dry_run)
+
+
+def redo_agent(agent, urls, run_id=None):
+    """Refait les clips de vidéos précises (nouveau choix des moments), à valider dans Otto, sans publier.
+    Appelé depuis la file d'Otto : le moteur principal est le seul à utiliser les cookies YouTube
+    (deux machines sur la même session au même moment = YouTube la déconnecte)."""
+    ag = json.loads(json.dumps(agent))
+    ag["config"]["watch"] = {**(ag["config"].get("watch") or {}), "youtube": [], "twitch": [], "search": []}
+    ag["config"]["sources"] = urls
+    REDO.update(suffix="_redo" + time.strftime("%m%d%H%M"), review=True)
+    try:
+        print(f"Refaire {len(urls)} vidéo(s) pour {ag['name']} (clips à valider dans Otto)", flush=True)
+        return run_agent(ag, run_id)
+    finally:
+        REDO.update(suffix="", review=False)
 
 
 def redo(agent_id, urls):

@@ -1,5 +1,8 @@
 # Refaire les clips de vidéos précises pour un agent, avec le choix des moments actuel.
-# Rien n'est publié : les nouveaux clips arrivent « à valider » dans Otto Clip (aperçu + Valider / Refuser).
+# Ce workflow ne télécharge rien : il dépose la demande dans la file d'Otto Clip, et c'est le moteur principal
+# (« Moteur Otto Clip ») qui la traite dans les ~20 s. Une seule machine utilise ainsi les cookies YouTube :
+# deux machines sur la même session au même moment, et YouTube la déconnecte.
+# Les nouveaux clips arrivent « à valider » dans Otto Clip (aperçu + Valider / Refuser), rien n'est publié.
 name: Refaire des clips
 
 on:
@@ -12,99 +15,20 @@ on:
         description: "URLs des vidéos, séparées par des virgules"
         required: true
 
-concurrency:
-  group: otto-redo
-  cancel-in-progress: false
-
 jobs:
   redo:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
-    env:
-      OTTO_API_URL: ${{ secrets.OTTO_API_URL }}
-      ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || secrets.GROK_API_KEY }}
-      OTTO_AI: groq
-      OTTO_WORKER_ID: cloud-redo
-      PYTHONIOENCODING: utf-8
-      PYTHONUNBUFFERED: "1"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: remotion/package-lock.json
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      # Cookies YouTube : YouTube les renouvelle à chaque usage, une copie figée finit par expirer.
-      # On garde donc la version renouvelée d'une session à l'autre (cache, CHIFFRÉE avec ENGINE_TOKEN car le
-      # dépôt est public). Si le secret YT_COOKIES change (nouvel export), c'est lui qui repart.
-      - name: Cookies renouvelés (cache)
-        uses: actions/cache/restore@v4
-        with:
-          path: .yt
-          key: yt-cookies-${{ github.run_id }}
-          restore-keys: yt-cookies-
-
-      - name: Cookies YouTube
+      - name: Demande de reprise
         env:
-          YT_COOKIES: ${{ secrets.YT_COOKIES }}
-        run: |
-          if [ -z "$YT_COOKIES" ]; then echo "::warning::Pas de secret YT_COOKIES : YouTube risque de bloquer les téléchargements"; exit 0; fi
-          sha=$(printf '%s' "$YT_COOKIES" | sha256sum | cut -c1-16)
-          echo "YT_SECRET_SHA=$sha" >> "$GITHUB_ENV"
-          if [ -f .yt/cookies.enc ] && [ "$(cat .yt/secret.sha 2>/dev/null)" = "$sha" ] &&              openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ENGINE_TOKEN -in .yt/cookies.enc -out "$RUNNER_TEMP/yt-cookies.txt" 2>/dev/null; then
-            echo "cookies renouvelés repris de la session précédente"
-          else
-            python ytcookies.py "$RUNNER_TEMP/yt-cookies.txt"
-          fi
-          echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
-      - name: Outils système (ffmpeg, polices)
-        run: |
-          echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji ttf-mscorefonts-installer > /dev/null
-          fc-cache -f > /dev/null
-      - name: Dépendances
-        run: |
-          pip install -q -r requirements.txt
-          pip install -q -U "yt-dlp[default]"
-          npm ci --prefix remotion --no-audit --no-fund
-      - name: Modèles de visage (opencv_zoo, Apache 2.0)
-        run: |
-          mkdir -p models
-          base=https://github.com/opencv/opencv_zoo/raw/main/models
-          curl -sSfL -o models/face_detection_yunet_2023mar.onnx $base/face_detection_yunet/face_detection_yunet_2023mar.onnx
-          curl -sSfL -o models/face_recognition_sface_2021dec.onnx $base/face_recognition_sface/face_recognition_sface_2021dec.onnx
-      - name: Cache des modèles Whisper et du navigateur Remotion
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/huggingface
-            remotion/node_modules/.remotion
-          key: models-v1
-      - name: Refaire les clips
-        env:
+          OTTO_API_URL: ${{ secrets.OTTO_API_URL }}
+          ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
           AGENT: ${{ inputs.agent }}
           URLS: ${{ inputs.urls }}
-        run: python saas_worker.py --agent "$AGENT" --redo "$URLS"
-
-      - name: Garde des cookies renouvelés
-        if: always() && env.YTDLP_COOKIES != ''
         run: |
-          mkdir -p .yt
-          openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ENGINE_TOKEN -in "$YTDLP_COOKIES" -out .yt/cookies.enc
-          echo "$YT_SECRET_SHA" > .yt/secret.sha
-
-      - name: Sauvegarde des cookies
-        if: always() && env.YTDLP_COOKIES != ''
-        uses: actions/cache/save@v4
-        with:
-          path: .yt
-          key: yt-cookies-${{ github.run_id }}
+          body=$(python3 -c 'import json,os; print(json.dumps({"agentId": os.environ["AGENT"], "urls": [u.strip() for u in os.environ["URLS"].split(",") if u.strip()]}))')
+          curl -sS --fail-with-body -X POST "$OTTO_API_URL/api/engine/redo" \
+            -H "authorization: Bearer $ENGINE_TOKEN" -H "content-type: application/json" -d "$body"
+          echo
+          echo "Demande déposée : le moteur principal la traite dans les ~20 s."
