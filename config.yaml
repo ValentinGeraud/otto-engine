@@ -93,7 +93,7 @@ style:
     keyword_pop: true       # chiffres, argent, mort, police... en couleur dans les sous-titres
     credit: true            # « Source : <chaîne> » en haut pendant 4 s
     progress_bar: true      # barre de progression en haut de l'écran
-    outro_voice: true       # le verdict est LU en voix off à la fin (commentaire original)
+    outro_voice: false      # 14/11/2026 : plus de voix off, animations « s'abonner » + « like » à la fin
     voice: null             # null = voix auto selon la langue (fr Henri, en Andrew, es-MX Jorge)
     voice_rate: "+8%"
     music_dir: branding/music   # dépose ici des musiques libres de droits (YouTube Audio Library)

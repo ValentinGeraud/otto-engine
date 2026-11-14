@@ -4,7 +4,7 @@ import { Audio, interpolate, Sequence, spring, useCurrentFrame } from "remotion"
 
 export type Engage = {
   subscribe: { at: number; label: string; done: string } | null;
-  like: { at: number } | null;
+  like: { at: number; x?: number; y?: number } | null;
 };
 
 const W = 1080;
@@ -67,7 +67,7 @@ const Subscribe: React.FC<{ e: NonNullable<Engage["subscribe"]>; fps: number }> 
   );
 };
 
-const Like: React.FC<{ at: number; fps: number }> = ({ at, fps }) => {
+const Like: React.FC<{ at: number; fps: number; x?: number; y?: number }> = ({ at, fps, x, y }) => {
   const frame = useCurrentFrame();
   const d = frame - Math.round(at * fps);
   const len = Math.round(1.6 * fps);
@@ -77,7 +77,7 @@ const Like: React.FC<{ at: number; fps: number }> = ({ at, fps }) => {
   const r = interpolate(d, [2, len], [40, 300], { extrapolateLeft: "clamp" });
   const o = interpolate(d, [2, 6, len], [0, 1, 0], { extrapolateLeft: "clamp" });
   return (
-    <div style={{ position: "absolute", left: W - 230, top: H * 0.42, opacity: out }}>
+    <div style={{ position: "absolute", left: x ?? W - 230, top: y ?? H * 0.42, opacity: out }}>
       {Array.from({ length: 9 }, (_, i) => {
         const a = (i / 9) * Math.PI * 2 + 0.3;
         return (
@@ -114,7 +114,7 @@ export const Engagement: React.FC<{ e: Engage | null; fps: number; sfx: Record<s
   return (
     <>
       {e.subscribe && <Subscribe e={e.subscribe} fps={fps} />}
-      {e.like && <Like at={e.like.at} fps={fps} />}
+      {e.like && <Like at={e.like.at} fps={fps} x={e.like.x} y={e.like.y} />}
       {e.subscribe && snd(e.subscribe.at, "swish", "s0")}
       {e.subscribe && snd(e.subscribe.at + 1.0, "pop", "s1")}
       {e.subscribe && snd(e.subscribe.at + 1.08, "ding", "s2")}

@@ -28,7 +28,8 @@ EDIT = {  # surchargeable dans config.yaml > style > edit
     "keyword_pop": True,
     "credit": True,
     "progress_bar": True,
-    "outro_voice": True, "voice": None, "voice_rate": "+8%",
+    # fin du short : carte verdict + animations « s'abonner » et « like », SANS voix off (14/11/2026)
+    "outro_voice": False, "voice": None, "voice_rate": "+8%", "engage_end": True,
     "music_dir": "branding/music", "music_volume": 0.07,
     "sfx": False, "sfx_volume": 0.5, "sfx_flash": True,  # bruitages (voir sfx.py)
     "question_seconds": 2.2,  # temps de lecture de la question après la voix off
@@ -327,6 +328,9 @@ def _music(ed, variant):
 def render(video: Path, words, clip, st, out: Path, lang="fr", person=None):
     st0 = st
     ed = {**EDIT, **(st.get("edit") or {})}
+    if clip.get("action"):
+        # action de jeu : on ne coupe PAS les silences (sinon on coupe l'action elle-même, où personne ne parle)
+        ed["jump_cuts"] = False
     use_rm = False
     if ed["remotion"]:
         import remotion_fx
@@ -373,6 +377,8 @@ def render(video: Path, words, clip, st, out: Path, lang="fr", person=None):
     if question:
         question_at = body + outro - 0.3
         outro += ed["question_seconds"]
+    if outro and ed.get("engage_end", True) and ed.get("engage_anim", True):
+        outro = max(outro, 4.7)   # place pour « s'abonner » (2,6 s) puis « like » (1,6 s)
     total = body + outro
 
     ass = out.with_suffix(".ass")

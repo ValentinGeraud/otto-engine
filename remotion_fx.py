@@ -242,11 +242,22 @@ ENGAGE_LABELS = {"fr": ("S'ABONNER", "ABONNÉ"), "en": ("SUBSCRIBE", "SUBSCRIBED
                  "es": ("SUSCRÍBETE", "SUSCRITO")}
 
 
-def engage(body, st, ed, lang="fr", card_at=None):
-    """Animations « abonne-toi » (bouton + curseur + cloche) et « like » (cœur + pouce)."""
-    if not ed.get("engage_anim", True) or body < 8:
+def engage(body, st, ed, lang="fr", card_at=None, total=None):
+    """Animations « abonne-toi » (bouton + curseur + cloche) et « like » (cœur + pouce).
+    engage_end (par défaut) : toutes les deux sur la fin, pendant la carte verdict, sans voix off ;
+    sinon au fil du clip (40 % et 72 %)."""
+    if not ed.get("engage_anim", True):
         return None
     sub, done = (st.get("subscribe_labels") or ENGAGE_LABELS.get(lang, ENGAGE_LABELS["en"]))
+    if ed.get("engage_end", True) and card_at is not None and total:
+        out = {"subscribe": None, "like": None}
+        if card_at + 0.3 + 2.6 <= total:
+            out["subscribe"] = {"at": round(card_at + 0.3, 2), "label": sub, "done": done}
+        if card_at + 2.9 + 1.6 <= total + 0.05:
+            out["like"] = {"at": round(card_at + 2.9, 2), "x": 540, "y": 1500}
+        return out if out["subscribe"] or out["like"] else None
+    if body < 8:
+        return None
     t_sub = max(st["hook_seconds"] + 0.8, body * ed.get("subscribe_at", 0.4))
     t_like = max(t_sub + 4.0, body * ed.get("like_at", 0.72))
     end = (card_at if card_at is not None else body) - 0.6
@@ -293,7 +304,7 @@ def build_props(base: Path, *, words, segs, body, total, st, ed, variant_colors,
         "intensity": ed.get("fx_intensity", 1.0),
         "cta": None, "watermark": None,
         "engage": engage(body, st, ed, lang=ed.get("_lang", "fr"),
-                         card_at=outro_at if takeaway else None),
+                         card_at=outro_at if takeaway else None, total=total),
         "style": ed.get("fx_style", "funny"),
     }
     eng = props["engage"] or {}

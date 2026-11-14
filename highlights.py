@@ -75,9 +75,11 @@ du niveau habituel). Tu ne vois pas l'image : juge d'après ce qui se dit autour
 Paroles entre {lo:.0f} s et {hi:.0f} s (format [secondes] texte) :
 {text}
 
-1. Est-ce probablement une belle action (but, arrêt, retournement, action folle, clutch, fail drôle) ?
-   Les réactions (« oh », « quoi », « incroyable », « non », rires, cris, « GG ») sont de bons indices.
-   "keep" = false si le pic semble venir d'autre chose (musique, pub, dispute sans action, bruit).
+1. Est-ce une VRAIE belle action ou un moment drôle (geste technique, aérienne, arrêt fou, retournement,
+   but de dernière seconde, clutch, fail hilarant) ? Un but ORDINAIRE n'en est pas un : chaque but fait du
+   bruit dans le jeu. Il faut que les joueurs ou commentateurs RÉAGISSENT (« oh », « allez », « il ose »,
+   « il est fou », cris, rires). S'ils parlent calmement ou d'autre chose (« bien tenté », « game de
+   chauffe »), "keep" = false. "keep" = false aussi si le pic vient d'autre chose (musique, pub, bruit).
 2. Bornes du Short en secondes : "start" = début de la construction de l'action (environ 8 à 15 s avant le
    pic), "end" = juste après la réaction (3 à 8 s après le pic). Durée totale 12 à 35 s, entre {lo:.0f} et {hi:.0f}.
 3. "score" de 1 à 10, sévère.
@@ -309,21 +311,45 @@ def _verify(c, sents, cfg, title, creator, ask, mn, mx, hard):
     return c
 
 
+# Réactions qui font une belle action : sans elles, un pic de son n'est souvent qu'un but banal (validé
+# sur les choix du propriétaire : 7 sur 8 bien triés).
+REACT = re.compile(
+    r"\b(oh+|o+h là|ola+|wow+|waouh|allez+|quoi+ ?\?|incroyable|de ouf|il est fou|t'es fou|c'est fou|il ose|"
+    r"mais non|non non|putain|purée|la vache|énorme|trop fort|monstre|what+|let'?s go|no way|oh my god|omg|"
+    r"insane|holy|crazy|vamos|qu[eé] locura|madre m[ií]a|incre[ií]ble|haha+|mdr|ptdr|\[rires?\]|\[laugh\w*\])",
+    re.I)
+
+
+def _reaction(sents, t, a=-4, b=7):
+    txt = " ".join(s["t"] for s in sents if s["e"] >= t + a and s["s"] <= t + b)
+    return txt.count("!") + 1.5 * len(REACT.findall(txt))
+
+
 def _action_cands(video, sents, cfg, duration):
-    """Candidats « action » repérés au son (jeux vidéo) : pic de volume = but, arrêt, cri, réaction."""
+    """Candidats « action » repérés au son (jeux vidéo) : pic de volume = but, arrêt, cri, réaction.
+    Gardés seulement si les joueurs ou commentateurs réagissent vraiment juste après (min_reaction)."""
     import actions
     if not video or not actions.wanted(cfg):
         return []
     try:
-        found = actions.peaks(video)
+        found = actions.peaks(video, max_peaks=30)
     except Exception as e:
         print(f"  (analyse du son impossible : {str(e)[:60]})")
         return []
     end_max = duration or (sents[-1]["e"] if sents else 0)
     out = []
+    need = cfg.get("min_reaction", 2)
+    quiet = 0
     for t, db in found:
+        r = _reaction(sents, t)
+        if r < need:   # personne ne réagit : but ou bruit ordinaire
+            quiet += 1
+            continue
         out.append({"kind": "action", "t": t, "db": db, "start": max(0.0, t - 12), "end": min(end_max, t + 6),
-                    "score": min(8, 5 + db / 4)})
+                    "score": min(9, 5 + r / 2)})
+    out = out[:12]
+    if quiet:
+        print(f"  {quiet} pic(s) de son sans vraie réaction écarté(s) (but ou bruit ordinaire)")
     if out:
         print(f"  {len(out)} pic(s) de son repéré(s) (actions possibles) : "
               + ", ".join(f"{c['t']:.0f}s" for c in out[:8]))
@@ -484,6 +510,8 @@ def _pick(sents, cfg, title, duration, creator="", keep=None, video=None):
             continue
         picked.append(c)
     for c in picked:
+        if c.get("kind") == "action":
+            c["action"] = True   # le montage ne coupera pas les silences de ce clip
         for k in ("_a", "_b", "keep", "setup", "payoff", "kind", "t", "db"):
             c.pop(k, None)
     return picked
