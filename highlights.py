@@ -331,8 +331,7 @@ def _ask_vision(prompt, images, cfg):
     if os.environ.get("OTTO_AI") == "groq" and os.environ.get("GROQ_API_KEY"):
         content = [{"type": "text", "text": prompt}] + [
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b}"}} for b in images]
-        return _groq(prompt, cfg, content=content, model=os.environ.get(
-            "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"))
+        return _groq(prompt, cfg, content=content, kind="vision")
     body = json.dumps({"model": cfg.get("ollama_vision_model", "gemma3:4b"), "stream": False, "format": "json",
                        "keep_alive": "20s", "options": {"num_ctx": 8192, "temperature": 0.3},
                        "messages": [{"role": "user", "content": prompt, "images": images}]}).encode()
@@ -527,19 +526,49 @@ def _claude(prompt, cfg):
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
-GROQ_FALLBACK = os.environ.get("GROQ_FALLBACK_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-_GROQ_STATE = {}
+# Groq retire régulièrement des modèles : on ne dépend d'aucun nom. Modèle introuvable (404) ou quota du jour
+# épuisé → on lit la liste des modèles disponibles et on prend le meilleur suivant, dans cet ordre de préférence.
+GROQ_PREFS = {
+    "text": [r"gpt-oss-120b", r"llama-3\.3-70b", r"llama-4-maverick", r"qwen3?-32b", r"kimi-k2", r"deepseek",
+             r"llama-4-scout", r"gpt-oss-20b", r"llama"],
+    "vision": [r"llama-4-maverick", r"llama-4-scout", r"vision", r"llama-4"],
+}
+GROQ_DEFAULT = {"text": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                "vision": os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")}
+_GROQ_STATE = {"excluded": set()}
 
 
-def _groq(prompt, cfg, content=None, model=None):
+def _groq_models():
+    import urllib.request
+    if "models" not in _GROQ_STATE:
+        req = urllib.request.Request("https://api.groq.com/openai/v1/models", headers={
+            "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}", "User-Agent": "otto-engine"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read()).get("data", [])
+        _GROQ_STATE["models"] = [m["id"] for m in data if m.get("active", True)
+                                 and not re.search(r"whisper|tts|guard|playai|orpheus|compound|prompt", m["id"], re.I)]
+        print(f"  (modèles Groq disponibles : {', '.join(_GROQ_STATE['models'][:12])})", flush=True)
+    return _GROQ_STATE["models"]
+
+
+def _groq_pick(kind):
+    ids = [i for i in _groq_models() if i not in _GROQ_STATE["excluded"]]
+    for pat in GROQ_PREFS[kind]:
+        for i in ids:
+            if re.search(pat, i, re.I):
+                return i
+    return ids[0] if ids and kind == "text" else None
+
+
+def _groq(prompt, cfg, content=None, kind="text"):
     """IA gratuite dans le cloud (https://console.groq.com, API compatible OpenAI), utilisée quand
     le moteur tourne sans carte graphique (GitHub Actions) : OTTO_AI=groq + GROQ_API_KEY.
     Offre gratuite limitée en jetons par minute : on attend et on réessaie sur une erreur 429."""
     import time
     import urllib.error
     import urllib.request
-    for attempt in range(6):
-        use = model or _GROQ_STATE.get("model") or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    for attempt in range(8):
+        use = _GROQ_STATE.get(kind) or GROQ_DEFAULT[kind]
         body = json.dumps({"model": use, "temperature": 0.4, "response_format": {"type": "json_object"},
                            "messages": [{"role": "user", "content": content or prompt}]}).encode()
         req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=body, headers={
@@ -550,14 +579,18 @@ def _groq(prompt, cfg, content=None, model=None):
                 return json.loads(r.read())["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
             detail = e.read()[:300].decode("utf-8", "replace")
-            # quota du JOUR épuisé (offre gratuite : ~100 000 jetons/jour pour llama 70B) : on passe sur
-            # le modèle de secours (quota ~5 fois plus grand) pour le reste de la session au lieu d'attendre
-            if e.code == 429 and re.search(r"per day|TPD|RPD", detail) and use != GROQ_FALLBACK:
-                print(f"  (quota du jour de {use} épuisé → {GROQ_FALLBACK})", flush=True)
-                _GROQ_STATE["model"] = GROQ_FALLBACK
-                model = None if model == use else model
+            gone = e.code in (400, 404) and re.search(r"model", detail, re.I) and \
+                re.search(r"not found|does not exist|decommission|not supported|no longer", detail, re.I)
+            daily = e.code == 429 and re.search(r"per day|TPD|RPD", detail)
+            if gone or daily:
+                _GROQ_STATE["excluded"].add(use)
+                nxt = _groq_pick(kind)
+                if not nxt:
+                    raise RuntimeError(f"Groq : aucun modèle {kind} disponible ({detail[:120]})")
+                print(f"  ({use} {'retiré par Groq' if gone else 'a épuisé son quota du jour'} → {nxt})", flush=True)
+                _GROQ_STATE[kind] = nxt
                 continue
-            if e.code not in (429, 500, 502, 503) or attempt == 5:
+            if e.code not in (429, 500, 502, 503) or attempt == 7:
                 raise RuntimeError(f"Groq HTTP {e.code} : {detail[:200]}")
             wait = float(e.headers.get("retry-after") or 0) or 15 * (attempt + 1)
             print(f"  (Groq occupé, nouvel essai dans {wait:.0f} s)", flush=True)
