@@ -45,6 +45,25 @@ jobs:
           cache: npm
           cache-dependency-path: remotion/package-lock.json
 
+      # yt-dlp a besoin d'un moteur JavaScript pour YouTube
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Cookies d'un compte YouTube SECONDAIRE (secret YT_COOKIES, fichier cookies.txt au format Netscape) :
+      # sans eux, YouTube bloque les téléchargements depuis les serveurs GitHub.
+      - name: Cookies YouTube
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          if [ -n "$YT_COOKIES" ]; then
+            printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+            echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+            echo "cookies YouTube chargés"
+          else
+            echo "::warning::Pas de secret YT_COOKIES : YouTube risque de bloquer les téléchargements"
+          fi
+
       - name: Outils système (ffmpeg, polices)
         run: |
           echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections

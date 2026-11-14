@@ -1,5 +1,6 @@
 """Téléchargement (yt-dlp) et transcription mot à mot (faster-whisper)."""
 import json
+import os
 import re
 from pathlib import Path
 
@@ -31,6 +32,11 @@ def download(url, workdir: Path, language="fr", uploader="") -> Path:
         "ignoreerrors": "only_download", "retries": 5, "sleep_interval_subtitles": 2,
         "socket_timeout": 30,
     }
+    # Dans le cloud, YouTube exige une session (« Sign in to confirm you're not a bot ») :
+    # cookies d'un compte YouTube secondaire, au format Netscape (YTDLP_COOKIES = chemin du fichier).
+    cookies = os.environ.get("YTDLP_COOKIES")
+    if cookies and Path(cookies).is_file():
+        opts["cookiefile"] = cookies
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     has_video = any(p.name.count(".") == 1 and p.suffix in (".mp4", ".mkv", ".webm")
