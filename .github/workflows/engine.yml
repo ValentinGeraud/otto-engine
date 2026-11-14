@@ -73,7 +73,7 @@ jobs:
       - name: Dépendances
         run: |
           pip install -q -r requirements.txt
-          pip install -q -U yt-dlp
+          pip install -q -U "yt-dlp[default]"
           npm ci --prefix remotion --no-audit --no-fund
 
       - name: Modèles de visage (opencv_zoo, Apache 2.0)

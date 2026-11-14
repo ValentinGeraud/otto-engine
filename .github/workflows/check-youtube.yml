@@ -24,7 +24,7 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - run: pip install -q -U yt-dlp
+      - run: pip install -q -U "yt-dlp[default]"
       - name: Liste de la chaîne
         run: yt-dlp --flat-playlist --playlist-end 5 --print "%(id)s %(title)s" "https://www.youtube.com/${{ inputs.channel }}/videos"
       - name: Téléchargement
