@@ -27,12 +27,11 @@ jobs:
       - run: pip install -q -U "yt-dlp[default]"
       - name: Liste de la chaîne
         run: yt-dlp --flat-playlist --playlist-end 5 --print "%(id)s %(title)s" "https://www.youtube.com/${{ inputs.channel }}/videos"
-      - name: Téléchargement
-        env:
-          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      # SANS les cookies YouTube : les utiliser ici, en même temps que le moteur, ferait déconnecter la session.
+      # Pour savoir si les cookies marchent, regarder plutôt le journal du « Moteur Otto Clip ».
+      - name: Téléchargement (sans cookies)
         run: |
           args=""
-          if [ -n "$YT_COOKIES" ]; then python ytcookies.py "$RUNNER_TEMP/c.txt"; args="--cookies $RUNNER_TEMP/c.txt"; fi
           deno --version | head -1
           yt-dlp $args -v -F "${{ inputs.video }}" 2>&1 | grep -v -i -E "cookie|header|authorization" | tail -40 || true
           yt-dlp $args -f "bv*[height<=720]+ba/b[height<=720]" -o test.mp4 "${{ inputs.video }}" && ls -la test.mp4
