@@ -493,7 +493,8 @@ def render(video: Path, words, clip, st, out: Path, lang="fr", person=None):
     if cta.get("text"):
         # texte imposé par une campagne, affiché pendant tout le clip (ex. « Watch the full
         # documentary on Netflix ») : bandeau lisible, centré, au-dessus des boutons de l'appli
-        font = cta.get("font", "C\\:/Windows/Fonts/arialbd.ttf")
+        font = cta.get("font", "C\\:/Windows/Fonts/arialbd.ttf" if __import__("os").name == "nt"
+                       else "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf")
         txt = cta["text"].replace("\\", "\\\\").replace(":", "\\:").replace("'", "’")
         y = cta.get("y_from_top", 230) if cta.get("position", "top") == "top" \
             else f"h-th-{cta.get('y_from_bottom', 420)}"

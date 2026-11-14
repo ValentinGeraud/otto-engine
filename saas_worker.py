@@ -385,8 +385,19 @@ def publish_approved():
         path = ROOT / (clip.get("fileKey") or "")
         pubs = clip.get("publications") or []
         if not path.is_file():
-            print(f"  ! fichier introuvable pour le clip {clip['id']}")
-            continue
+            # Dans le cloud, le fichier rendu lors d'une session précédente n'existe plus :
+            # on reprend la vidéo hébergée sur Vercel Blob (envoyée pour l'aperçu).
+            if not str(clip.get("videoUrl") or "").startswith("https://"):
+                print(f"  ! fichier introuvable pour le clip {clip['id']}")
+                continue
+            path = ROOT / "work" / "_published" / f"{clip['id']}.mp4"
+            if not path.is_file():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with requests.get(clip["videoUrl"], stream=True, timeout=300) as r:
+                    r.raise_for_status()
+                    with open(path, "wb") as f:
+                        for chunk in r.iter_content(1 << 20):
+                            f.write(chunk)
         for pub in pubs:
             if pub["status"] in ("published", "scheduled"):
                 continue
@@ -452,12 +463,15 @@ def requested_runs():
     return api("GET", f"/api/engine/runs?worker={WORKER_ID}").get("runs", [])
 
 
-def listen(every_minutes):
-    """Reste à l'écoute : un « Lancer maintenant » démarre en ~20 s, et un passage complet toutes les N minutes."""
+def listen(every_minutes, max_minutes=0, first_pass=False):
+    """Reste à l'écoute : un « Lancer maintenant » démarre en ~20 s, et un passage complet toutes les N minutes.
+    max_minutes > 0 (cloud) : s'arrête proprement après ce délai, entre deux passages, pour que l'état soit sauvegardé.
+    first_pass : commence par un passage complet (cloud : chaque session démarre ainsi)."""
     print(f"À l'écoute de {API} (moteur « {WORKER_ID} ») : demandes toutes les 20 s, "
           f"passage automatique toutes les {every_minutes} min. Ctrl+C pour arrêter.", flush=True)
-    next_pass = time.time() + every_minutes * 60 if every_minutes else float("inf")
-    while True:
+    stop_at = time.time() + max_minutes * 60 if max_minutes else float("inf")
+    next_pass = time.time() if first_pass else (time.time() + every_minutes * 60 if every_minutes else float("inf"))
+    while time.time() < stop_at:
         try:
             for r in requested_runs():
                 print(f"\n>>> Lancé depuis Otto Clip : {r['agent']['name']}", flush=True)
@@ -475,6 +489,7 @@ def listen(every_minutes):
         except Exception as e:
             print(f"  ! {str(e)[:300]} (nouvel essai dans 20 s)", flush=True)
         time.sleep(20)
+    print("Fin de la session d'écoute (durée maximale atteinte).", flush=True)
 
 
 def main():
@@ -483,12 +498,14 @@ def main():
     ap.add_argument("--agent")
     ap.add_argument("--listen", action="store_true", help="reste à l'écoute des « Lancer maintenant » du SaaS")
     ap.add_argument("--every", type=int, default=30, help="avec --listen : passage automatique toutes les N min (0 = jamais)")
+    ap.add_argument("--max-minutes", type=int, default=0, help="avec --listen : s'arrête après N min (cloud)")
+    ap.add_argument("--first-pass", action="store_true", help="avec --listen : commence par un passage complet")
     a = ap.parse_args()
     if len(TOKEN) < 32:
         sys.exit("ENGINE_TOKEN manquant (32 caractères minimum, même valeur que dans apps/web/.env.local).")
     if a.listen:
         try:
-            listen(a.every)
+            listen(a.every, a.max_minutes, a.first_pass)
         except KeyboardInterrupt:
             print("\nArrêt du moteur.")
         return

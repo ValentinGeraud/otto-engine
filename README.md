@@ -105,7 +105,7 @@ Le passage quotidien (`autostart/run_agent.cmd`) traite les 3 chaînes l'une apr
 ## Lancer l'agent tout seul chaque jour (Windows)
 
 ```bash
-schtasks /create /tn "ClipByCut" /sc daily /st 08:00 /tr "python \"C:\Users\TEMP.BUREAU-VAL.006\Desktop\test polymarket\clipper\agent.py\""
+schtasks /create /tn "ClipByCut" /sc daily /st 08:00 /tr "python \"C:\chemin\vers\clipper\agent.py\""
 ```
 
 ## Réglages utiles (`config.yaml`)

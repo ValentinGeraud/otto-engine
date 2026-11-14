@@ -267,8 +267,35 @@ def _claude(prompt, cfg):
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
+def _groq(prompt, cfg):
+    """IA gratuite dans le cloud (https://console.groq.com, API compatible OpenAI), utilisée quand
+    le moteur tourne sans carte graphique (GitHub Actions) : OTTO_AI=groq + GROQ_API_KEY.
+    Offre gratuite limitée en jetons par minute : on attend et on réessaie sur une erreur 429."""
+    import time
+    import urllib.error
+    import urllib.request
+    body = json.dumps({"model": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"), "temperature": 0.4,
+                       "response_format": {"type": "json_object"},
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    for attempt in range(6):
+        req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=body, headers={
+            "Content-Type": "application/json", "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
+            "User-Agent": "otto-engine"})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return json.loads(r.read())["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503) or attempt == 5:
+                raise RuntimeError(f"Groq HTTP {e.code} : {e.read()[:200]!r}")
+            wait = float(e.headers.get("retry-after") or 0) or 15 * (attempt + 1)
+            print(f"  (Groq occupé, nouvel essai dans {wait:.0f} s)", flush=True)
+            time.sleep(min(wait, 90))
+
+
 def _ollama(prompt, cfg):
-    """IA locale gratuite (https://ollama.com)."""
+    """IA locale gratuite (https://ollama.com). Dans le cloud (OTTO_AI=groq), la même demande part chez Groq."""
+    if os.environ.get("OTTO_AI") == "groq" and os.environ.get("GROQ_API_KEY"):
+        return _groq(prompt, cfg)
     import socket
     import urllib.request
     with socket.create_connection(("127.0.0.1", 11434), timeout=3):
