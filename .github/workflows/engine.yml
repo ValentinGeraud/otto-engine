@@ -18,6 +18,11 @@ concurrency:
   group: otto-engine
   cancel-in-progress: false
 
+# Pour lancer la session suivante elle-même (le déclencheur horaire de GitHub ne s'est jamais déclenché)
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   engine:
     runs-on: ubuntu-latest
