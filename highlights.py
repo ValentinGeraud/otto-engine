@@ -216,14 +216,20 @@ def _numbered(sents, a, b):
     return "\n".join(f"#{k} [{sents[k]['s']:.0f}] {sents[k]['t']}" for k in range(a, b + 1))
 
 
-def _chunks(sents, size=900, overlap=90):
+def _chunks(sents, size=900, overlap=90, max_chars=None):
     """Tranches de ~15 min qui se chevauchent de 1 min 30 : une histoire à cheval sur deux tranches
-    est vue en entier dans l'une des deux. Renvoie des couples (premier, dernier) d'indices."""
+    est vue en entier dans l'une des deux. Renvoie des couples (premier, dernier) d'indices.
+    max_chars : plafond de texte par tranche (l'offre gratuite de Groq refuse une demande de plus de
+    ~8 000 jetons par minute : une vidéo très bavarde est donc découpée plus finement)."""
+    if max_chars is None:
+        max_chars = int(os.environ.get("CHUNK_MAX_CHARS", "13000" if os.environ.get("OTTO_AI") == "groq" else "60000"))
     out, i = [], 0
     while i < len(sents):
-        j = i
-        while j + 1 < len(sents) and sents[j + 1]["e"] - sents[i]["s"] <= size:
+        j, chars = i, len(sents[i]["t"]) + 12
+        while j + 1 < len(sents) and sents[j + 1]["e"] - sents[i]["s"] <= size \
+                and chars + len(sents[j + 1]["t"]) + 12 <= max_chars:
             j += 1
+            chars += len(sents[j]["t"]) + 12
         out.append((i, j))
         if j + 1 >= len(sents):
             break
@@ -570,8 +576,12 @@ def _groq(prompt, cfg, content=None, kind="text"):
     import urllib.request
     for attempt in range(8):
         use = _GROQ_STATE.get(kind) or GROQ_DEFAULT[kind]
-        body = json.dumps({"model": use, "temperature": 0.4, "response_format": {"type": "json_object"},
-                           "messages": [{"role": "user", "content": content or prompt}]}).encode()
+        payload = {"model": use, "temperature": 0.4, "response_format": {"type": "json_object"},
+                   # la réponse réservée compte dans la limite de jetons par minute : on la plafonne
+                   "max_tokens": 2500, "messages": [{"role": "user", "content": content or prompt}]}
+        if use.startswith("openai/gpt-oss"):
+            payload["reasoning_effort"] = "low"   # réflexion courte : la réponse JSON tient dans max_tokens
+        body = json.dumps(payload).encode()
         req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=body, headers={
             "Content-Type": "application/json", "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
             "User-Agent": "otto-engine"})
