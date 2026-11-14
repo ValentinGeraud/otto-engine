@@ -57,9 +57,8 @@ jobs:
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
           if [ -n "$YT_COOKIES" ]; then
-            printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+            python ytcookies.py "$RUNNER_TEMP/yt-cookies.txt"
             echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
-            echo "cookies YouTube chargés"
           else
             echo "::warning::Pas de secret YT_COOKIES : YouTube risque de bloquer les téléchargements"
           fi
