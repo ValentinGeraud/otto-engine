@@ -529,12 +529,13 @@ def _claude(prompt, cfg):
 # Groq retire régulièrement des modèles : on ne dépend d'aucun nom. Modèle introuvable (404) ou quota du jour
 # épuisé → on lit la liste des modèles disponibles et on prend le meilleur suivant, dans cet ordre de préférence.
 GROQ_PREFS = {
-    "text": [r"gpt-oss-120b", r"llama-3\.3-70b", r"llama-4-maverick", r"qwen3?-32b", r"kimi-k2", r"deepseek",
-             r"llama-4-scout", r"gpt-oss-20b", r"llama"],
-    "vision": [r"llama-4-maverick", r"llama-4-scout", r"vision", r"llama-4"],
+    "text": [r"gpt-oss-120b", r"qwen3\.\d+-\d+b", r"llama-3\.3-70b", r"kimi-k2", r"deepseek",
+             r"gpt-oss-20b", r"qwen", r"llama"],
+    # 11/2026 : seul qwen/qwen3.8-27b lit les images sur Groq (llama-4 scout/maverick retirés)
+    "vision": [r"qwen3\.\d+-\d+b", r"vision", r"llama-4", r"muse"],
 }
-GROQ_DEFAULT = {"text": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                "vision": os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")}
+GROQ_DEFAULT = {"text": os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
+                "vision": os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")}
 _GROQ_STATE = {"excluded": set()}
 
 

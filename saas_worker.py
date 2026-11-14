@@ -324,6 +324,20 @@ def _ramp_today(pub_cfg, today):
     return max(1, int(per_week[min(week, len(per_week) - 1)]))
 
 
+# Offre gratuite de Buffer : 10 posts programmés au maximum par chaîne. Au-delà, le clip attend le passage suivant.
+BUFFER_QUEUE_MAX = int(os.environ.get("BUFFER_QUEUE_MAX", "9"))
+
+
+def queue_full(account_id):
+    from datetime import datetime, timezone
+    try:
+        taken = json.loads(SLOTS_FILE.read_text(encoding="utf-8")).get(account_id, [])
+    except Exception:
+        return False
+    now = datetime.now(timezone.utc)
+    return sum(1 for t in taken if datetime.fromisoformat(t) > now) >= BUFFER_QUEUE_MAX
+
+
 def next_slot(account_id, pub_cfg):
     """Prochain créneau libre pour ce compte, au rythme de l'agent : N posts par jour (montée en
     puissance par semaine) répartis régulièrement dans la fenêtre horaire, jamais avant 10 min.
@@ -408,6 +422,9 @@ def publish_approved():
             try:
                 via_buffer = buffer_channel(pub["accountId"])
                 if via_buffer:
+                    if queue_full(pub["accountId"]):
+                        print(f"  file Buffer pleine ({BUFFER_QUEUE_MAX}) : clip gardé pour le prochain passage")
+                        continue
                     when = next_slot(pub["accountId"], pub_cfg)
                     pub["url"] = publish_buffer(path, clip, via_buffer, when=when)
                     pub["status"], pub["error"], pub["scheduledAt"] = "scheduled", None, when.isoformat()
@@ -417,6 +434,9 @@ def publish_approved():
                 if t.get("via") == "buffer":
                     # Chaîne connectée dans Otto Clip via le compte Buffer de l'utilisateur.
                     ch = {"id": t["bufferChannelId"], "service": t["platform"]}
+                    if queue_full(pub["accountId"]):
+                        print(f"  file Buffer pleine ({BUFFER_QUEUE_MAX}) : clip gardé pour le prochain passage")
+                        continue
                     when = next_slot(pub["accountId"], pub_cfg)
                     pub["url"] = publish_buffer(path, clip, ch, key=t["token"], when=when)
                     pub["status"], pub["error"], pub["scheduledAt"] = "scheduled", None, when.isoformat()
@@ -434,7 +454,8 @@ def publish_approved():
                 pub["status"], pub["error"] = "failed", str(e)[:300]
                 print(f"  ! {pub['platform']} : {e}")
         done = [p for p in pubs if p["status"] in ("published", "scheduled")]
-        status = ("published" if any(p["status"] == "published" for p in pubs) else "scheduled") if done             else ("failed" if pubs else "approved")
+        waiting = any(p["status"] == "pending" for p in pubs)   # file Buffer pleine : on réessaiera
+        status = ("published" if any(p["status"] == "published" for p in pubs) else "scheduled") if done             else ("approved" if waiting or not pubs else "failed")
         api("PATCH", f"/api/engine/clips/{clip['id']}", json={"status": status, "publications": pubs})
 
 
