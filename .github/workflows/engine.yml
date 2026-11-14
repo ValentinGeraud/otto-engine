@@ -150,3 +150,11 @@ jobs:
         with:
           path: .yt
           key: yt-cookies-${{ github.run_id }}
+
+      # Enchaîne la session suivante (sauf si celle-ci a été annulée à la main : c'est la façon de l'arrêter,
+      # avec « Disable workflow »). Le déclencheur toutes les 30 min reste en secours.
+      - name: Session suivante
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run engine.yml --repo "$GITHUB_REPOSITORY" --ref main
