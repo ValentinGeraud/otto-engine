@@ -3,37 +3,94 @@ import json
 import os
 import re
 
-PROMPT = """Tu es un clippeur expert en contenus courts viraux (TikTok, Reels, Shorts).
-Niche du compte : {niche}.
+PROMPT = """Tu es un monteur de Shorts/Reels/TikTok très exigeant. Niche du compte : {niche}.
 À privilégier : {focus}
 
-Voici la transcription horodatée d'une vidéo intitulée « {title} ».
-Format : [début-fin] texte
+Transcription de la vidéo « {title} », découpée en phrases numérotées.
+Format : #numéro [secondes] texte
 
 {transcript}
 
-Choisis les {n} MEILLEURS moments à transformer en clips verticaux.
-Règles :
-- Chaque clip dure idéalement entre {mn} et {mx} secondes. La durée suit le MOMENT : si
-  l'explication, l'histoire ou la blague a besoin de plus de temps, va jusqu'à {hard} secondes.
-  Ne coupe JAMAIS au milieu d'une explication, d'une énumération ou avant la chute.
-- Il commence EXACTEMENT sur une phrase forte (pas d'intro, pas de « euh », pas de contexte),
-  et finit quand l'idée est TERMINÉE : conclusion, chute ou réponse donnée, phrase complète.
-- Il doit se comprendre sans avoir vu le reste de la vidéo.
-- Pas de chevauchement entre les clips.
-- Note la viralité de chaque clip de 1 à 10, honnêtement.
+Trouve au maximum {n} moments qui feraient un EXCELLENT Short. Un bon Short est une mini-histoire
+COMPLÈTE qui se comprend sans avoir vu le reste :
+  1. une mise en place claire (on comprend tout de suite de quoi on parle, ce qui se passe),
+  2. une montée (tension, question, situation qui dérape, explication qui intrigue),
+  3. une CHUTE : la punchline, le moment drôle, la réponse, le résultat, la réaction forte.
+Le Short s'arrête juste APRÈS la chute (sur la réaction ou le rire qui suit), jamais avant.
 
-Pour chaque clip, écris :
-- "hook" : texte affiché en haut de l'écran pendant les {hook_s:.0f} premières secondes, 4 à 9 mots,
-  percutant, qui crée une curiosité. Pas de point final, au maximum 1 emoji.{hook_style}
-- "title" : titre YouTube Short de 60 caractères maximum.{title_rule}
-- "caption" : description courte (1 phrase) suivie de 3 à 5 hashtags de NICHE (pas #fyp).
-- "takeaway" : TON commentaire en 6 à 12 mots, affiché à la fin du clip : une punchline,
-  un avis tranché ou une leçon. Il doit apporter quelque chose, pas résumer ce qu'on vient de voir.{question_rule}
-IMPORTANT : hook, title, caption, takeaway et question sont écrits en {lang}, la langue du public de la chaîne.
+Règles :
+- "start_id" = numéro de la phrase où commence la mise en place (pas d'intro, pas de « euh »,
+  pas de phrase qui renvoie à quelque chose d'avant : « comme je disais », « et du coup »).
+- "end_id" = numéro de la phrase qui contient la chute ou la réaction qui la suit. L'histoire est
+  TERMINÉE à cette phrase. Si tu hésites, prends une phrase plus loin plutôt qu'une plus tôt.
+- Durée visée : {mn} à {mx} secondes (les [secondes] t'aident à estimer), jamais plus de {hard} s.
+  Un moment drôle et complet de 15 s vaut mieux qu'un passage plat de 60 s.
+- REFUSE les passages sans chute (discussion qui tourne en rond, consignes de jeu, bla-bla,
+  remerciements, sponsors), ceux qui demandent du contexte, et ceux qu'on ne comprend qu'en voyant
+  l'image quand le texte seul ne les rend ni drôles ni forts.
+- Pas de chevauchement. Peu de moments mais excellents : si rien n'est vraiment bon, renvoie peu de clips.
+- "score" de 1 à 10, SÉVÈRE : 9-10 = je le partage à mes potes, 7-8 = solide, 5 ou moins = à jeter.
 
 Réponds UNIQUEMENT avec du JSON valide :
-{{"clips": [{{"start": 12.3, "end": 48.9, "score": 8, "why": "...", "hook": "...", "title": "...", "caption": "...", "takeaway": "...", "question": "..."}}]}}"""
+{{"clips": [{{"start_id": 12, "end_id": 19, "setup": "de quoi ça parle, en 1 phrase", "payoff": "la chute, en 1 phrase", "score": 8}}]}}"""
+
+
+VERIFY = """Tu valides un Short avant publication. Niche : {niche}. À privilégier : {focus}
+Vidéo source : « {title} ».
+
+Extrait de la transcription autour du moment (phrases numérotées, [secondes]) :
+{text}
+
+Le Short proposé va de la phrase #{a} à la phrase #{b} ({dur:.0f} s).
+Mise en place annoncée : {setup}
+Chute annoncée : {payoff}
+
+1. Quelqu'un qui ne voit QUE les phrases #{a} à #{b} comprend-il la situation dès le début ?
+   Sinon, recule "start_id" (le moins possible) pour inclure la mise en place nécessaire.
+2. La chute (punchline, réponse, résultat, réaction) est-elle DANS le passage, en entier ?
+   Sinon, avance "end_id" jusqu'à la phrase qui la contient (ou la réaction juste après).
+   Si le passage continue après la chute sur autre chose, recule "end_id" juste après la chute.
+3. Durée finale idéale {mn} à {mx} s, jamais plus de {hard} s.
+4. "keep" = false si, même ajusté, ce n'est pas un très bon Short (pas de chute, rien de drôle ou
+   de fort, incompréhensible sans l'image ou sans le reste de la vidéo).
+5. "score" de 1 à 10, sévère et honnête, pour le passage AJUSTÉ.
+
+Puis écris pour ce Short, en {lang} correct et naturel, sans faute :
+- "hook" : 4 à 9 mots affichés en haut de l'écran pendant {hook_s:.0f} secondes, qui donnent envie de
+  voir la suite SANS dévoiler la chute. Il correspond à ce qui se passe VRAIMENT. Pas de point final,
+  au maximum 1 emoji, pas de citation inventée.{hook_style}
+- "title" : titre YouTube de 60 caractères maximum.{title_rule}
+- "caption" : 1 phrase + 3 à 5 hashtags de NICHE (pas #fyp).
+- "takeaway" : TON commentaire de 6 à 12 mots affiché à la fin : punchline ou avis tranché, pas un résumé.{question_rule}
+
+Réponds UNIQUEMENT en JSON :
+{{"start_id": {a}, "end_id": {b}, "keep": true, "score": 7, "why": "...", "hook": "...", "title": "...", "caption": "...", "takeaway": "...", "question": "..."}}"""
+
+
+ACTION = """Tu valides un Short d'ACTION de jeu vidéo. Niche : {niche}. À privilégier : {focus}
+Vidéo source : « {title} ».
+
+Le son de la vidéo montre un pic net à {t:.0f} s (cris, réaction, explosion de but : +{db:.0f} dB au-dessus
+du niveau habituel). Tu ne vois pas l'image : juge d'après ce qui se dit autour (vocal, commentateur).
+Paroles entre {lo:.0f} s et {hi:.0f} s (format [secondes] texte) :
+{text}
+
+1. Est-ce probablement une belle action (but, arrêt, retournement, action folle, clutch, fail drôle) ?
+   Les réactions (« oh », « quoi », « incroyable », « non », rires, cris, « GG ») sont de bons indices.
+   "keep" = false si le pic semble venir d'autre chose (musique, pub, dispute sans action, bruit).
+2. Bornes du Short en secondes : "start" = début de la construction de l'action (environ 8 à 15 s avant le
+   pic), "end" = juste après la réaction (3 à 8 s après le pic). Durée totale 12 à 35 s, entre {lo:.0f} et {hi:.0f}.
+3. "score" de 1 à 10, sévère.
+
+Puis écris pour ce Short, en {lang} correct et naturel, sans faute :
+- "hook" : 4 à 9 mots affichés en haut de l'écran pendant {hook_s:.0f} secondes, qui annoncent l'action
+  SANS la dévoiler (« Il tente l'impossible en fin de match 😳 »). Pas de point final, 1 emoji max.{hook_style}
+- "title" : titre YouTube de 60 caractères maximum.{title_rule}
+- "caption" : 1 phrase + 3 à 5 hashtags de NICHE (pas #fyp).
+- "takeaway" : TON commentaire de 6 à 12 mots affiché à la fin : punchline ou avis tranché.{question_rule}
+
+Réponds UNIQUEMENT en JSON :
+{{"keep": true, "start": {s0:.0f}, "end": {e0:.0f}, "score": 7, "why": "...", "hook": "...", "title": "...", "caption": "...", "takeaway": "...", "question": "..."}}"""
 
 
 LANGS = {"fr": "français", "en": "anglais (natural American English)",
@@ -150,14 +207,191 @@ def _fmt(sents):
     return "\n".join(f"[{s['s']:.1f}-{s['e']:.1f}] {s['t']}" for s in sents)
 
 
-def pick(sents, cfg, title, duration, creator="", keep=None):
-    clips = _pick(sents, cfg, title, duration, creator, keep)
+def pick(sents, cfg, title, duration, creator="", keep=None, video=None):
+    clips = _pick(sents, cfg, title, duration, creator, keep, video)
     return [finish(c, cfg, creator, title) for c in clips]
 
 
-def _pick(sents, cfg, title, duration, creator="", keep=None):
+def _numbered(sents, a, b):
+    return "\n".join(f"#{k} [{sents[k]['s']:.0f}] {sents[k]['t']}" for k in range(a, b + 1))
+
+
+def _chunks(sents, size=900, overlap=90):
+    """Tranches de ~15 min qui se chevauchent de 1 min 30 : une histoire à cheval sur deux tranches
+    est vue en entier dans l'une des deux. Renvoie des couples (premier, dernier) d'indices."""
+    out, i = [], 0
+    while i < len(sents):
+        j = i
+        while j + 1 < len(sents) and sents[j + 1]["e"] - sents[i]["s"] <= size:
+            j += 1
+        out.append((i, j))
+        if j + 1 >= len(sents):
+            break
+        k = j
+        while k > i and sents[j]["e"] - sents[k]["s"] < overlap:
+            k -= 1
+        i = max(k, i + 1)
+    return out
+
+
+def _ids(c, lo, hi):
+    """Numéros de phrases renvoyés par l'IA, s'ils sont valides dans [lo, hi]."""
+    try:
+        a, b = int(c.get("start_id")), int(c.get("end_id"))
+    except (TypeError, ValueError):
+        return None
+    return (a, b) if lo <= a <= b <= hi else None
+
+
+def _complete(sents, b):
+    """Si la dernière phrase est coupée net (pas de ponctuation, enchaînement immédiat), on prend la
+    suivante : la transcription coupe parfois une phrase en deux."""
+    for _ in range(2):
+        if b + 1 < len(sents) and not sents[b]["t"].rstrip().endswith((".", "!", "?", "…")) \
+                and sents[b + 1]["s"] - sents[b]["e"] < 0.6:
+            b += 1
+    return b
+
+
+# Passages sponsorisés : l'IA les laisse parfois passer, on les écarte à coup sûr.
+SPONSOR = re.compile(
+    r"sponsor|partenaire de (cette|la) vid[ée]o|code promo|lien (en|dans la) description|"
+    r"profite[rz]? de l'offre|ouvr(ez|ir|ant) un compte|"
+    r"promo code|link in (the )?description|this video is sponsored|thanks to .{0,30} for sponsoring|"
+    r"use (my )?code|patrocin|c[oó]digo (de descuento|promocional)|enlace en la descripci[oó]n", re.I)
+
+
+def _is_sponsor(sents, a, b):
+    return bool(SPONSOR.search(" ".join(s["t"] for s in sents[a: b + 1])))
+
+
+def _setup_back(sents, a, b, floor):
+    """Moment trop court (souvent la chute seule) : on remonte, phrase par phrase, vers sa mise en place,
+    tant que les phrases s'enchaînent (pas de vraie pause) et sans dépasser 4 phrases."""
+    k = 0
+    while a > 0 and k < 4 and sents[b]["e"] - sents[a]["s"] < floor and sents[a]["s"] - sents[a - 1]["e"] < 1.5:
+        a -= 1
+        k += 1
+    return a
+
+
+def _verify(c, sents, cfg, title, creator, ask, mn, mx, hard):
+    """2e passe : relit le moment avec un peu de contexte, ajuste début/fin pour avoir la mise en place
+    ET la chute, le rejette s'il ne tient pas debout seul, et écrit hook / titre / textes."""
+    a, b = c["_a"], c["_b"]
+    lo, hi = max(0, a - 8), min(len(sents) - 1, b + 8)
+    prompt = VERIFY.format(niche=cfg["niche"], focus=cfg.get("focus", ""), title=title,
+                           text=_numbered(sents, lo, hi)[:9000], a=a, b=b,
+                           dur=sents[b]["e"] - sents[a]["s"], setup=c.get("setup") or "?",
+                           payoff=c.get("payoff") or "?", mn=mn, mx=mx, hard=hard, lang=_lang(cfg),
+                           **_hook_args(cfg), **_text_args(cfg, creator))
+    d = json.loads(re.search(r"\{.*\}", ask(prompt, cfg), re.S).group(0))
+    a, b = _ids(d, lo, hi) or (a, b)
+    b = _complete(sents, b)
+    a = _setup_back(sents, a, b, max(12, mn * 0.5))
+    if _is_sponsor(sents, a, b):
+        d["keep"] = False
+        c["payoff"] = "passage sponsorisé"
+    c["_a"], c["_b"] = a, b
+    c["start"], c["end"] = round(sents[a]["s"], 2), round(sents[b]["e"], 2)
+    for k in ("hook", "title", "caption", "takeaway", "question", "why"):
+        if d.get(k):
+            c[k] = d[k]
+    if isinstance(d.get("score"), (int, float)):
+        c["score"] = d["score"]
+    c["keep"] = d.get("keep") is not False
+    return c
+
+
+def _action_cands(video, sents, cfg, duration):
+    """Candidats « action » repérés au son (jeux vidéo) : pic de volume = but, arrêt, cri, réaction."""
+    import actions
+    if not video or not actions.wanted(cfg):
+        return []
+    try:
+        found = actions.peaks(video)
+    except Exception as e:
+        print(f"  (analyse du son impossible : {str(e)[:60]})")
+        return []
+    end_max = duration or (sents[-1]["e"] if sents else 0)
+    out = []
+    for t, db in found:
+        out.append({"kind": "action", "t": t, "db": db, "start": max(0.0, t - 12), "end": min(end_max, t + 6),
+                    "score": min(8, 5 + db / 4)})
+    if out:
+        print(f"  {len(out)} pic(s) de son repéré(s) (actions possibles) : "
+              + ", ".join(f"{c['t']:.0f}s" for c in out[:8]))
+    return out
+
+
+def _ask_vision(prompt, images, cfg):
+    """Même demande, avec des images : Groq (modèle qui voit) dans le cloud, Ollama (gemma3) sur le PC.
+    Sans modèle qui voit disponible, on retombe sur le texte seul."""
+    import urllib.request
+    if os.environ.get("OTTO_AI") == "groq" and os.environ.get("GROQ_API_KEY"):
+        content = [{"type": "text", "text": prompt}] + [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b}"}} for b in images]
+        return _groq(prompt, cfg, content=content, model=os.environ.get(
+            "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"))
+    body = json.dumps({"model": cfg.get("ollama_vision_model", "gemma3:4b"), "stream": False, "format": "json",
+                       "keep_alive": "20s", "options": {"num_ctx": 8192, "temperature": 0.3},
+                       "messages": [{"role": "user", "content": prompt, "images": images}]}).encode()
+    req = urllib.request.Request("http://127.0.0.1:11434/api/chat", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return json.loads(r.read())["message"]["content"]
+
+
+VISION_NOTE = """
+Tu vois aussi {n} images de la vidéo : {when}. Sers-t'en pour savoir ce qui s'est VRAIMENT passé
+(but marqué et par qui : « X SCORED! », arrêt, action ratée, score affiché…) : le hook et le titre
+doivent décrire l'action réelle, sans la dévoiler.
+"""
+
+
+def _verify_action(c, sents, cfg, title, creator, ask, duration, video=None):
+    t = c["t"]
+    lo, hi = max(0.0, t - 40), t + 20
+    if duration:
+        hi = min(hi, duration)
+    text = "\n".join(f"[{s['s']:.0f}] {s['t']}" for s in sents if s["e"] >= lo and s["s"] <= hi) or "(personne ne parle)"
+    prompt = ACTION.format(niche=cfg["niche"], focus=cfg.get("focus", ""), title=title, t=t, db=c["db"],
+                           lo=lo, hi=hi, text=text[:6000], s0=c["start"], e0=c["end"], lang=_lang(cfg),
+                           **_hook_args(cfg), **_text_args(cfg, creator))
+    reply = None
+    if video:
+        import actions
+        times = [t - 8, t - 2, t + 1]
+        imgs = actions.frames(video, times)
+        if imgs:
+            when = ", ".join(f"{x:.0f} s" for x in times[: len(imgs)])
+            try:
+                reply = _ask_vision(prompt + VISION_NOTE.format(n=len(imgs), when=when), imgs, cfg)
+            except Exception as e:
+                print(f"  (images non analysées : {str(e)[:60]})")
+    d = json.loads(re.search(r"\{.*\}", reply or ask(prompt, cfg), re.S).group(0))
+    try:
+        a, b = float(d.get("start")), float(d.get("end"))
+        # l'action doit contenir le pic, et rester raisonnable (12 à 40 s)
+        if lo <= a < t <= b <= hi + 1 and 10 <= b - a <= 40:
+            c["start"], c["end"] = round(a, 2), round(b, 2)
+    except (TypeError, ValueError):
+        pass
+    for k in ("hook", "title", "caption", "takeaway", "question", "why"):
+        if d.get(k):
+            c[k] = d[k]
+    if isinstance(d.get("score"), (int, float)):
+        c["score"] = d["score"]
+    c["keep"] = d.get("keep") is not False
+    c["payoff"] = f"action au son à {t:.0f}s"
+    return c
+
+
+def _pick(sents, cfg, title, duration, creator="", keep=None, video=None):
     mn, mx = cfg["min_seconds"], cfg["max_seconds"]
-    hard = cfg.get("hard_max_seconds", mx)
+    hard = cfg.get("hard_max_seconds") or max(mx, 60)
+    want = cfg["clips_per_video"]
+    min_score = cfg.get("min_score", 6)
     # Source déjà courte (clip Twitch...) : on la garde en entier
     if duration and duration <= mx + 2:
         c = _whole(sents, title, duration)
@@ -166,61 +400,87 @@ def _pick(sents, cfg, title, duration, creator="", keep=None):
         return [c]
     ai = cfg.get("ai", "ollama")
     if ai == "claude" and os.environ.get("ANTHROPIC_API_KEY"):
-        chunks, per_chunk, ask = [sents], cfg["clips_per_video"], _claude
-    elif ai == "ollama":
-        # un petit modèle local ne lit pas 1 h de transcription d'un coup :
-        # on découpe en tranches de ~8 min, 2 moments par tranche, puis on garde les meilleurs
-        chunks, cur = [], []
-        for s in sents:
-            if cur and s["e"] - cur[0]["s"] > 480:
-                chunks.append(cur)
-                cur = []
-            cur.append(s)
-        if cur:
-            chunks.append(cur)
-        per_chunk, ask = 2, _ollama
+        ask, chunks = _claude, [(0, len(sents) - 1)]
+    elif ai == "ollama":  # Ollama sur le PC, ou Groq dans le cloud (OTTO_AI=groq)
+        ask, chunks = _ollama, _chunks(sents)
     else:
         return _heuristic(sents, cfg, title)
+    per_chunk = max(2, min(5, want)) if len(chunks) == 1 else 3
 
-    clips, failed = [], 0
-    for i, ch in enumerate(chunks):
+    # 1re passe : repérage des mini-histoires (début = mise en place, fin = chute), par numéro de phrase
+    # (l'IA ne donne plus de minutage : elle inventait des fins « début + 20 s » au milieu de l'histoire)
+    cands, failed = [], 0
+    for n, (lo, hi) in enumerate(chunks):
         prompt = PROMPT.format(niche=cfg["niche"], focus=cfg.get("focus", ""), title=title,
-                               **_hook_args(cfg), **_text_args(cfg, creator),
-                               lang=_lang(cfg),
-                               transcript=_fmt(ch)[:300_000], n=per_chunk, mn=mn, mx=mx, hard=hard)
+                               transcript=_numbered(sents, lo, hi)[:300_000], n=per_chunk,
+                               mn=mn, mx=mx, hard=hard)
         try:
             data = json.loads(re.search(r"\{.*\}", ask(prompt, cfg), re.S).group(0))
-            got = [c for c in data.get("clips", [])
-                   if isinstance(c.get("start"), (int, float)) and isinstance(c.get("end"), (int, float))
-                   and ch[0]["s"] - 5 <= c["start"] < c["end"] <= ch[-1]["e"] + 60]
-            # bornes recalées sur les phrases : début de phrase, fin d'idée (jamais en plein milieu)
-            for c in got:
-                snap(c, sents, mn, mx, hard, _lang_code(cfg))
-            clips += got
+            for c in data.get("clips", []):
+                ids = _ids(c, lo, hi)
+                if not ids:
+                    continue
+                c["_a"], c["_b"] = ids
+                c["score"] = c["score"] if isinstance(c.get("score"), (int, float)) else 5
+                cands.append(c)
         except Exception as e:
             failed += 1
-            print(f"  (tranche {i + 1}/{len(chunks)} illisible : {str(e)[:60]})")
+            print(f"  (tranche {n + 1}/{len(chunks)} illisible : {str(e)[:60]})")
         if len(chunks) > 1:
-            print(f"  … tranche {i + 1}/{len(chunks)} analysée ({len(clips)} moments trouvés)")
-    if not clips:
-        print("  (aucun moment exploitable → sélection heuristique)")
-        return _heuristic(sents, cfg, title)
-    clips.sort(key=lambda c: c.get("score", 0), reverse=True)
+            print(f"  … tranche {n + 1}/{len(chunks)} analysée ({len(cands)} moments repérés)")
+    for c in cands:
+        c["start"], c["end"] = sents[c["_a"]]["s"], sents[c["_b"]]["e"]
+    # jeux vidéo : belles actions repérées au son (but, arrêt, cri), même quand personne ne raconte rien
+    acts = _action_cands(video, sents, cfg, duration)
+    if not cands and not acts:
+        if failed == len(chunks):
+            print("  (IA indisponible → sélection heuristique)")
+            return _heuristic(sents, cfg, title)
+        print("  (aucun moment assez fort dans cette vidéo)")
+        return []
+
+    # doublons (tranches qui se chevauchent, action déjà dans une histoire) : on garde le mieux noté
+    pool = sorted(cands + acts, key=lambda c: c["score"], reverse=True)
+    uniq = []
+    for c in pool:
+        if all(c["end"] <= u["start"] or c["start"] >= u["end"] for u in uniq):
+            uniq.append(c)
+    # avec des actions, on en vérifie au moins quelques-unes même si les histoires sont mieux notées
+    if acts:
+        first = [c for c in uniq if c.get("kind") == "action"][: max(2, want // 2)]
+        uniq = first + [c for c in uniq if c not in first]
+
+    # 2e passe : vérification une par une (les mieux notées d'abord), jusqu'à en avoir assez
     picked = []
-    for c in clips:  # pas de chevauchement
-        if all(c["end"] <= p["start"] or c["start"] >= p["end"] for p in picked):
-            picked.append(c)
-    if keep:  # filtre imposé (ex. personne visible à l'image), avant la 2e passe coûteuse
-        ok = []
-        for c in picked:
-            if len(ok) >= cfg["clips_per_video"]:
-                break
-            if keep(c):
-                ok.append(c)
-        picked = ok
-    if ask is _ollama:  # 2e passe : textes réécrits en ne lisant QUE le passage choisi
-        for c in picked[: cfg["clips_per_video"]]:
-            _polish(c, sents, cfg, title, creator)
+    for c in uniq[: want * 2 + 4]:
+        if len(picked) >= want:
+            break
+        try:
+            if c.get("kind") == "action":
+                _verify_action(c, sents, cfg, title, creator, ask, duration, video)
+            else:
+                _verify(c, sents, cfg, title, creator, ask, mn, mx, hard)
+        except Exception as e:
+            print(f"  (vérification impossible : {str(e)[:60]})")
+            c["keep"] = c.get("kind") != "action"
+        c["start"], c["end"] = round(c["start"], 2), round(c["end"], 2)
+        dur = c["end"] - c["start"]
+        overlap = any(not (c["end"] <= p["start"] or c["start"] >= p["end"]) for p in picked)
+        verdict = ("trop long" if dur > hard + 5 else "trop court" if dur < 8 else
+                   "rejeté à la relecture" if not c["keep"] else
+                   f"note {c['score']} < {min_score}" if c["score"] < min_score else
+                   "chevauche un autre clip" if overlap else "")
+        label = "action" if c.get("kind") == "action" else f"#{c['_a']}→#{c['_b']}"
+        print(f"  {label} {c['start']:.0f}s→{c['end']:.0f}s ({dur:.0f}s) note {c['score']}"
+              f" · {str(c.get('payoff') or '')[:70]}{' → ' + verdict if verdict else ''}", flush=True)
+        if verdict:
+            continue
+        if keep and not keep(c):  # filtre imposé (ex. personne visible à l'image)
+            continue
+        picked.append(c)
+    for c in picked:
+        for k in ("_a", "_b", "keep", "setup", "payoff", "kind", "t", "db"):
+            c.pop(k, None)
     return picked
 
 
@@ -267,17 +527,21 @@ def _claude(prompt, cfg):
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
-def _groq(prompt, cfg):
+GROQ_FALLBACK = os.environ.get("GROQ_FALLBACK_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+_GROQ_STATE = {}
+
+
+def _groq(prompt, cfg, content=None, model=None):
     """IA gratuite dans le cloud (https://console.groq.com, API compatible OpenAI), utilisée quand
     le moteur tourne sans carte graphique (GitHub Actions) : OTTO_AI=groq + GROQ_API_KEY.
     Offre gratuite limitée en jetons par minute : on attend et on réessaie sur une erreur 429."""
     import time
     import urllib.error
     import urllib.request
-    body = json.dumps({"model": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"), "temperature": 0.4,
-                       "response_format": {"type": "json_object"},
-                       "messages": [{"role": "user", "content": prompt}]}).encode()
     for attempt in range(6):
+        use = model or _GROQ_STATE.get("model") or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+        body = json.dumps({"model": use, "temperature": 0.4, "response_format": {"type": "json_object"},
+                           "messages": [{"role": "user", "content": content or prompt}]}).encode()
         req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=body, headers={
             "Content-Type": "application/json", "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
             "User-Agent": "otto-engine"})
@@ -285,8 +549,16 @@ def _groq(prompt, cfg):
             with urllib.request.urlopen(req, timeout=180) as r:
                 return json.loads(r.read())["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
+            detail = e.read()[:300].decode("utf-8", "replace")
+            # quota du JOUR épuisé (offre gratuite : ~100 000 jetons/jour pour llama 70B) : on passe sur
+            # le modèle de secours (quota ~5 fois plus grand) pour le reste de la session au lieu d'attendre
+            if e.code == 429 and re.search(r"per day|TPD|RPD", detail) and use != GROQ_FALLBACK:
+                print(f"  (quota du jour de {use} épuisé → {GROQ_FALLBACK})", flush=True)
+                _GROQ_STATE["model"] = GROQ_FALLBACK
+                model = None if model == use else model
+                continue
             if e.code not in (429, 500, 502, 503) or attempt == 5:
-                raise RuntimeError(f"Groq HTTP {e.code} : {e.read()[:200]!r}")
+                raise RuntimeError(f"Groq HTTP {e.code} : {detail[:200]}")
             wait = float(e.headers.get("retry-after") or 0) or 15 * (attempt + 1)
             print(f"  (Groq occupé, nouvel essai dans {wait:.0f} s)", flush=True)
             time.sleep(min(wait, 90))

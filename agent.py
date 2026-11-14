@@ -82,7 +82,7 @@ def process(src, cfg, state, do_publish):
         # Squeezie : le gaming est autorisé (ses réactions en jeu, seul ou avec d'autres)
         pick_cfg = {**cfg, "focus": (cfg.get("focus") or "") + "\n" + (cfg.get("watch") or {}).get(
             "gaming_ok_focus", "")}
-    clips = highlights.pick(sents, pick_cfg, title, duration, creator, keep)[: cfg["clips_per_video"]]
+    clips = highlights.pick(sents, pick_cfg, title, duration, creator, keep, video)[: cfg["clips_per_video"]]
 
     pub = cfg.get("publish") or {}
     publishing = do_publish
