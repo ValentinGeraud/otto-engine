@@ -59,8 +59,12 @@ def api(method, path, **kw):
 
 
 # ---------- 1-3 : production ----------
+# --redo : dossier à part (état neuf, nouvelles clés de clips) pour refaire des vidéos déjà clippées
+REDO = {"suffix": "", "review": False}
+
+
 def channel_id(agent_id):
-    return "saas_" + "".join(ch for ch in agent_id if ch.isalnum())[:24]
+    return "saas_" + "".join(ch for ch in agent_id if ch.isalnum())[:24] + REDO["suffix"]
 
 
 def write_channel(agent):
@@ -204,7 +208,7 @@ def report_clips(agent):
                 "sourceTitle": info.get("title"), "sourceCreator": c.get("credit") or info.get("uploader"),
                 "start": c["start"], "end": c["end"], "score": c.get("score"), "hook": c.get("hook"),
                 "title": c.get("title"), "caption": c.get("caption"), "takeaway": c.get("takeaway"),
-                "fileKey": c["file"]}
+                "fileKey": c["file"], "review": REDO["review"]}
         try:
             # Idempotent côté SaaS (engineKey) : un clip déjà envoyé renvoie simplement son id.
             res = api("POST", "/api/engine/clips", json=body)
@@ -500,6 +504,8 @@ def main():
     ap.add_argument("--every", type=int, default=30, help="avec --listen : passage automatique toutes les N min (0 = jamais)")
     ap.add_argument("--max-minutes", type=int, default=0, help="avec --listen : s'arrête après N min (cloud)")
     ap.add_argument("--first-pass", action="store_true", help="avec --listen : commence par un passage complet")
+    ap.add_argument("--redo", help="URLs de vidéos (séparées par des virgules) à reclipper pour --agent, "
+                                    "avec le choix des moments actuel ; les clips arrivent à valider dans Otto")
     a = ap.parse_args()
     if len(TOKEN) < 32:
         sys.exit("ENGINE_TOKEN manquant (32 caractères minimum, même valeur que dans apps/web/.env.local).")
@@ -509,7 +515,30 @@ def main():
         except KeyboardInterrupt:
             print("\nArrêt du moteur.")
         return
+    if a.redo:
+        redo(a.agent, [u.strip() for u in a.redo.split(",") if u.strip()])
+        return
     scheduled_pass(a.agent, a.dry_run)
+
+
+def redo(agent_id, urls):
+    """Refait les clips de vidéos précises pour un agent (nouveau choix des moments), sans rien publier :
+    les clips arrivent « à valider » dans Otto, même si l'agent est en pilote automatique."""
+    if not agent_id or not urls:
+        sys.exit("--redo demande --agent et au moins une URL.")
+    agents = [x for x in api("GET", "/api/engine/agents")["agents"] if x["id"] == agent_id]
+    if not agents:
+        sys.exit("Agent introuvable, en pause ou sans crédits.")
+    ag = json.loads(json.dumps(agents[0]))
+    ag["config"]["watch"] = {**(ag["config"].get("watch") or {}), "youtube": [], "twitch": [], "search": []}
+    ag["config"]["sources"] = urls
+    REDO.update(suffix="_redo" + time.strftime("%m%d%H%M"), review=True)
+    try:
+        run_id = api("POST", "/api/engine/runs", json={"workerId": WORKER_ID, "agentId": ag["id"]}).get("runId")
+    except Exception:
+        run_id = None
+    print(f"Refaire {len(urls)} vidéo(s) pour {ag['name']} (clips à valider dans Otto)", flush=True)
+    run_agent(ag, run_id)
 
 
 if __name__ == "__main__":
