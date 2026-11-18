@@ -108,7 +108,9 @@ def schedule(channel, video_url, text, title, when: datetime, category="24", key
     if service == "instagram":
         meta = {"instagram": {"type": "reel", "shouldShareToFeed": True}}
     elif service == "youtube":
-        meta = {"youtube": {"title": title[:100], "categoryId": str(category)}}
+        # visibilité explicite : sans « privacy », Buffer applique le réglage par défaut de la chaîne
+        meta = {"youtube": {"title": title[:100], "categoryId": str(category),
+                            "privacy": "public", "madeForKids": False, "notifySubscribers": True}}
     elif service == "tiktok":
         meta = {"tiktok": {"title": title[:90]}}
     inp = {"channelId": channel["id"], "text": text, "schedulingType": "automatic",
