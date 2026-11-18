@@ -52,7 +52,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 def api(method, path, **kw):
     r = requests.request(method, f"{API}{path}", headers={"authorization": f"Bearer {TOKEN}"},
-                         timeout=60, **kw)
+                         timeout=kw.pop("timeout", 60), **kw)
     if r.status_code >= 400:
         raise RuntimeError(f"{method} {path} → HTTP {r.status_code} : {r.text[:200]}")
     return r.json()
@@ -459,6 +459,46 @@ def publish_approved():
         api("PATCH", f"/api/engine/clips/{clip['id']}", json={"status": status, "publications": pubs})
 
 
+CAMPAIGN_EVERY_S = 10 * 60   # soumissions aux campagnes de clipping
+
+
+def campaign_tick():
+    """Campagnes de clipping (clipping.net) : retrouve le lien public des posts Buffer des agents « campagne »
+    (au plus 10 questions à Buffer par passage, le SaaS ne redemande pas un post avant 3 h), puis demande
+    au SaaS de soumettre tous les posts en ligne qui sont dans la fenêtre de la campagne."""
+    try:
+        todo = api("GET", "/api/engine/campaigns").get("links", [])
+    except Exception as e:
+        print(f"  ! campagnes : {str(e)[:200]}", flush=True)
+        return
+    import buffer
+    found = []
+    for l in todo:
+        try:
+            key = None
+            if not buffer_channel(l["accountId"]):
+                t = api("GET", f"/api/engine/accounts/{l['accountId']}/token")
+                if t.get("via") != "buffer":
+                    continue
+                key = t["token"]
+            q = "query($id: PostId!) { post(input: {id: $id}) { id status externalLink } }"
+            post = buffer.gql(q, {"id": l["postId"]}, key=key)["post"] or {}
+            link = post.get("externalLink") if post.get("status") == "sent" else None
+            found.append({"clipId": l["clipId"], "accountId": l["accountId"], "url": link})
+        except Exception as e:
+            print(f"  (Buffer, post {l.get('postId')} : {str(e)[:100]})", flush=True)
+            if "quota" in str(e) or "pause" in str(e) or "429" in str(e):
+                break
+    try:
+        r = api("POST", "/api/engine/campaigns", json={"links": found}, timeout=290)
+        if r.get("linked") or r.get("submitted") or r.get("refused") or r.get("errors"):
+            print(f"  campagnes : {r.get('linked', 0)} lien(s) trouvé(s), {r.get('submitted', 0)} soumis, "
+                  f"{r.get('refused', 0)} refusé(s), {r.get('retry', 0)} à retenter"
+                  + (f" · {'; '.join(r['errors'])[:200]}" if r.get("errors") else ""), flush=True)
+    except Exception as e:
+        print(f"  ! soumission aux campagnes : {str(e)[:200]}", flush=True)
+
+
 def scheduled_pass(only=None, dry_run=False):
     """Passage automatique : tous les agents actifs (ou un seul), chacun enregistré comme passage dans le SaaS."""
     agents = api("GET", "/api/engine/agents")["agents"]
@@ -481,6 +521,7 @@ def scheduled_pass(only=None, dry_run=False):
             print(f"  ! agent {ag['name']} : {e}", flush=True)
     if not dry_run:
         publish_approved()
+        campaign_tick()
 
 
 def requested_runs():
@@ -496,6 +537,7 @@ def listen(every_minutes, max_minutes=0, first_pass=False):
           f"passage automatique toutes les {every_minutes} min. Ctrl+C pour arrêter.", flush=True)
     stop_at = time.time() + max_minutes * 60 if max_minutes else float("inf")
     next_pass = time.time() if first_pass else (time.time() + every_minutes * 60 if every_minutes else float("inf"))
+    next_campaigns = time.time()
     while time.time() < stop_at:
         try:
             for r in requested_runs():
@@ -508,6 +550,9 @@ def listen(every_minutes, max_minutes=0, first_pass=False):
                 except Exception as e:
                     print(f"  ! {e}", flush=True)
                 publish_approved()
+            if time.time() >= next_campaigns:
+                campaign_tick()
+                next_campaigns = time.time() + CAMPAIGN_EVERY_S
             if time.time() >= next_pass:
                 print(f"\n===== {time.strftime('%Y-%m-%d %H:%M')} · passage automatique =====", flush=True)
                 scheduled_pass()
