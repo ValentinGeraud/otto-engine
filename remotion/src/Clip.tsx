@@ -22,6 +22,7 @@ import {
   useCurrentFrame,
 } from "remotion";
 import { Engage, Engagement } from "./Engagement";
+import { fontStack, fontWeight, useClipFont } from "./fonts";
 
 type Word = { w: string; s: number; e: number; key?: boolean };
 type Fx = { t: number; kind: string; emoji?: string; dur?: number };
@@ -33,7 +34,7 @@ export type ClipProps = {
   video: string;
   font: string;
   colors: { active: string; key: string; hookText: string; hookBack: string; bar: string; card: string };
-  sub: { size: number; marginBottom: number; wordsPerLine: number };
+  sub: { size: number; marginBottom: number; wordsPerLine: number; color?: string; uppercase?: boolean };
   hook: { text: string; seconds: number; size: number } | null;
   credit: string | null;
   card: { label: string; text: string; at: number } | null;
@@ -190,7 +191,7 @@ const Captions: React.FC<{ p: ClipProps }> = ({ p }) => {
     <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: p.sub.marginBottom }}>
       <div
         style={{
-          fontFamily: p.font, fontSize: p.sub.size, fontWeight: 900, color: "white", textAlign: "center",
+          fontFamily: fontStack(p.font), fontSize: p.sub.size, fontWeight: fontWeight(p.font), color: p.sub.color ?? "white", textAlign: "center",
           lineHeight: 1.1, maxWidth: W - 140, textShadow: stroke(5),
           transform: `scale(${interpolate(enter, [0, 1], [0.6, 1])}) translateY(${interpolate(enter, [0, 1], [40, 0])}px)`,
         }}
@@ -200,7 +201,7 @@ const Captions: React.FC<{ p: ClipProps }> = ({ p }) => {
           const pop = active
             ? spring({ frame: frame - Math.round(w.s * p.fps), fps: p.fps, config: { damping: 10, stiffness: 300 } })
             : 0;
-          const color = w.key ? p.colors.key : active ? p.colors.active : "white";
+          const color = w.key ? p.colors.key : active ? p.colors.active : p.sub.color ?? "white";
           return (
             <span
               key={i}
@@ -209,7 +210,7 @@ const Captions: React.FC<{ p: ClipProps }> = ({ p }) => {
                 transform: `scale(${1 + 0.16 * pop}) rotate(${active && w.key ? -3 * pop : 0}deg)`,
               }}
             >
-              {w.w.toUpperCase()}
+              {p.sub.uppercase === false ? w.w : w.w.toUpperCase()}
             </span>
           );
         })}
@@ -262,7 +263,7 @@ const Hook: React.FC<{ p: ClipProps }> = ({ p }) => {
     <AbsoluteFill style={{ alignItems: "center", paddingTop: 260 }}>
       <div
         style={{
-          fontFamily: p.font, fontSize: p.hook.size, fontWeight: 900, color: p.colors.hookText,
+          fontFamily: fontStack(p.font), fontSize: p.hook.size, fontWeight: fontWeight(p.font), color: p.colors.hookText,
           background: p.colors.hookBack, padding: "18px 30px", borderRadius: 18, maxWidth: W - 180,
           textAlign: "center", lineHeight: 1.15, opacity: out, boxShadow: "0 10px 30px rgba(0,0,0,.35)",
           transform: `scale(${interpolate(s, [0, 1], [0.4, 1])}) rotate(${wiggle - 2 * (1 - s)}deg)`,
@@ -296,7 +297,7 @@ const CardBox: React.FC<{ at: number; fps: number; size: number; font: string; b
   return (
     <div
       style={{
-        fontFamily: font, fontWeight: 900, fontSize: size, color: "white", background: bg,
+        fontFamily: fontStack(font), fontWeight: fontWeight(font), fontSize: size, color: "white", background: bg,
         padding: "26px 36px", borderRadius: 26, textAlign: "center", lineHeight: 1.15, maxWidth: W - 200,
         boxShadow: "0 14px 40px rgba(0,0,0,.5)",
         transform: `scale(${interpolate(s, [0, 1], [0.3, 1])}) rotate(${(1 - s) * -8}deg)`,
@@ -380,6 +381,7 @@ const Sounds: React.FC<{ p: ClipProps }> = ({ p }) => (
 );
 
 export const Clip: React.FC<ClipProps> = (p) => {
+  useClipFont(p.font);
   const cam = useCamera(p);
   return (
     <AbsoluteFill style={{ background: "black" }}>

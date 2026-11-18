@@ -116,7 +116,12 @@ def _variants(st):
     c = st.get("active_color")
     if c and len(c) == 6:
         vs[0]["active"], vs[0]["bar"] = c, "0x" + c[4:6] + c[2:4] + c[0:2]
-    return vs
+    # recette choisie dans Otto : couleurs du hook, et palette fixe (plus de rotation des gabarits)
+    if st.get("hook_back") and len(st["hook_back"]) == 6:
+        vs[0]["hook_back"] = "&H00" + st["hook_back"]
+    if st.get("hook_text") and len(st["hook_text"]) == 6:
+        vs[0]["hook_text"] = "&H00" + st["hook_text"]
+    return vs[:1] if st.get("fixed_palette") else vs
 
 
 # ---------- découpe : jump cuts + punch-in ----------
@@ -283,7 +288,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             b = min(chunk[i + 1]["s"] if i + 1 < len(chunk) else w["e"], sub_end)
             parts = []
             for j, x in enumerate(chunk):
-                txt = _esc(x["w"]).upper()
+                txt = _esc(x["w"]).upper() if st.get("uppercase", True) else _esc(x["w"])
                 is_key = ed["keyword_pop"] and KEYWORDS.search(x["w"])
                 if j == i:  # mot prononcé : couleur + léger grossissement
                     parts.append(f"{{\\c&H00{key if is_key else active}&\\fscx112\\fscy112}}"
